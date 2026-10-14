@@ -605,8 +605,7 @@ async function viewQuotes(params, seq) {
   const status = params.get('status') || '';
   const data = await api('GET', `/quotations?limit=200&q=${encodeURIComponent(q)}&status=${status}`);
   const main = shell(seq, 'quotes', `
-    <div class="page-head"><h1>ใบเสนอราคา <span class="muted">(${data.total})</span></h1></div>
-    <p class="muted" style="margin-top:-8px">สร้างใบเสนอราคาได้จากหน้ารายละเอียดงาน (ปุ่ม "+ สร้างใบเสนอราคา")</p>
+    <div class="page-head"><h1>ใบเสนอราคา <span class="muted">(${data.total})</span></h1><button class="btn primary" id="new-quote">+ สร้างใบเสนอราคา</button></div>
     <form class="toolbar" id="search">
       <input name="q" placeholder="ค้นหาเลขที่, ลูกค้า, งาน" value="${esc(q)}" style="min-width:240px">
       <select name="status">${options(state.meta.QUOTE_STATUSES, status, { empty: 'ทุกสถานะ' })}</select>
@@ -623,6 +622,27 @@ async function viewQuotes(params, seq) {
     e.preventDefault();
     const f = formData(e.target);
     location.hash = `#/quotes?q=${encodeURIComponent(f.q)}&status=${f.status}`;
+  });
+  main.querySelector('#new-quote').addEventListener('click', () => newQuoteDialog());
+}
+
+// เลือกงานแล้วสร้างใบเสนอราคา (ข้อมูลลูกค้า/รายการดึงจากงาน)
+async function newQuoteDialog() {
+  const jobs = (await api('GET', '/jobs?limit=200&open=1')).rows;
+  if (!jobs.length) {
+    toast('ยังไม่มีงานที่กำลังดำเนินการ — รับงานก่อนแล้วค่อยสร้างใบเสนอราคา', true);
+    return;
+  }
+  openModal('สร้างใบเสนอราคา', `<form class="form" style="grid-template-columns:1fr">
+    <div><label>เลือกงาน *</label><select name="job_id" required>
+      ${options(jobs.map((j) => ({ key: j.id, label: `${j.job_no} · ${j.title} · ${j.customer_name}` })), '', { empty: '-- เลือกงาน --' })}
+    </select><div class="muted" style="font-size:13px;margin-top:4px">ระบบจะดึงข้อมูลลูกค้าและรายการป้ายจากงานมาให้ แก้ไขต่อได้</div></div>
+    <div class="error"></div>
+    <div class="form-actions"><button type="button" class="btn" data-close>ยกเลิก</button><button class="btn primary" type="submit">สร้าง</button></div>
+  </form>`, async (data) => {
+    const q = await api('POST', '/quotations', { job_id: data.job_id });
+    toast(`สร้างใบเสนอราคา ${q.quote_no} แล้ว`);
+    location.hash = `#/quotes/${q.id}`;
   });
 }
 
