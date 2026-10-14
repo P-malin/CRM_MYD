@@ -48,6 +48,12 @@ h1 { font-size: 22px; } h2 { font-size: 18px; } h3 { font-size: 16px; }
 input, select, textarea { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--text); width: 100%; }
 .toolbar input, .toolbar select { width: auto; }
 textarea { min-height: 70px; resize: vertical; }
+/* กันช่องล้นกรอบ: ลูกของ grid/flex หดได้ และช่องวันที่บน iOS ไม่ใช้ความกว้างขั้นต่ำของตัวเอง */
+input, select, textarea { max-width: 100%; min-width: 0; }
+.form > * { min-width: 0; }
+input[type="date"] { -webkit-appearance: none; appearance: none; display: block; min-height: 40px; line-height: 1.25; }
+input[type="date"]::-webkit-date-and-time-value { text-align: left; }
+input[type="date"]::-webkit-calendar-picker-indicator { margin: 0 0 0 4px; }
 label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
 .form { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 .form .full { grid-column: 1 / -1; }
@@ -127,7 +133,18 @@ body:has(.auth) { background: radial-gradient(1200px 600px at 10% -10%, #dbeafe 
   .side { flex-direction: row; flex-wrap: wrap; align-items: center; padding: 8px; }
   .side .brand { padding: 4px 8px 8px; width: 100%; } .side .spacer, .side .who { display: none; }
   .main { padding: 16px; }
-  .form { grid-template-columns: 1fr; }
+  .form { grid-template-columns: 1fr 1fr; gap: 10px; }
+  /* ช่องสั้น (ตัวเลข/วันที่/ตัวเลือก) วาง 2 คอลัมน์ ส่วนช่องยาวเต็มแถว */
+  .form > :not(:has(input[type=number], input[type=date], select:not([name=customer_id], [name=job_type_id], [name=delivery_method], [name=assigned_to], [name=kind]))) { grid-column: 1 / -1; }
+  /* ตัวอักษร 16px กัน iPhone ซูมเข้าเองเวลาแตะช่องกรอก */
+  input, select, textarea { font-size: 16px; padding: 8px 9px; }
+  label { font-size: 12.5px; }
+  .modal { padding: 12px 8px; }
+  .modal-box { padding: 16px 14px; border-radius: 14px; }
+  .modal-head h3 { font-size: 17px; }
+  .form-actions { position: sticky; bottom: -16px; background: #fff; padding: 10px 0; margin-top: 8px; }
+  .form-actions .btn { flex: 1; }
+  .auth .form, #pw.form, #status-form.form { grid-template-columns: 1fr; }
   dl.info { grid-template-columns: 110px 1fr; }
 }
 @media print {
