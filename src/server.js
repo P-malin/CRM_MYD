@@ -7,7 +7,7 @@ const PORT = Number(process.env.PORT) || 3000;
   const db = await openDb();
   const server = createApp(db).listen(PORT, () => {
     const where = process.env.DATABASE_URL ? 'Postgres (DATABASE_URL)' : `PGlite (${process.env.PGLITE_DIR || 'data/pglite'})`;
-    console.log(`CRM ร้านป้าย พร้อมใช้งานที่ http://localhost:${PORT} (db: ${where})`);
+    console.log(`MYD Easy พร้อมใช้งานที่ http://localhost:${PORT} (db: ${where})`);
   });
 
   // ปิดอย่างปลอดภัยเมื่อแพลตฟอร์มสั่งหยุด เพื่อปิดการเชื่อมต่อฐานข้อมูลให้เรียบร้อย

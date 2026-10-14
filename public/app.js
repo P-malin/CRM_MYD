@@ -1,4 +1,4 @@
-/* CRM ร้านป้าย — หน้าเว็บแบบ single-page (vanilla JS) */
+/* MYD Easy — ระบบจัดการงานร้านป้าย: หน้าเว็บแบบ single-page (vanilla JS) */
 'use strict';
 
 const state = { token: localStorage.getItem('token'), me: null, meta: null, users: [], jobTypes: [], jobStatuses: [] };
@@ -114,7 +114,11 @@ function renderAuth(mode) {
   const reg = mode === 'register';
   $app.innerHTML = `
     <div class="auth">
-      <h1>🪧 CRM ร้านป้าย</h1>
+      <div class="brand-hero">
+        <img src="/logo.svg" alt="" width="72" height="72">
+        <div class="wordmark">MYD <span>Easy</span></div>
+        <div class="tagline">ระบบจัดการงานร้านป้าย ง่าย ครบ จบในที่เดียว</div>
+      </div>
       <div class="card">
         <h2>${reg ? 'สมัครใช้งานสำหรับร้านของคุณ' : 'เข้าสู่ระบบ'}</h2>
         <form class="form" id="auth-form">
@@ -159,7 +163,7 @@ function shell(active, content) {
   $app.innerHTML = `
     <div class="shell">
       <nav class="side">
-        <div class="brand">🪧 ${esc(state.me.tenant.name)}<small>CRM ร้านป้าย</small></div>
+        <div class="brand"><img src="/logo.svg" alt="" width="34" height="34"><div><div class="wordmark">MYD <span>Easy</span></div><small>${esc(state.me.tenant.name)}</small></div></div>
         ${NAV.map(([k, t]) => `<a href="#/${k}" class="${active === k ? 'active' : ''}">${t}</a>`).join('')}
         <div class="spacer"></div>
         <div class="who">${esc(state.me.user.name)} · ${esc(label(state.meta.ROLES, state.me.user.role))}</div>
