@@ -222,3 +222,48 @@ test('วิธีส่งมอบงาน', async () => {
   const csv = await call('GET', '/reports/jobs.csv', { token });
   assert.ok(csv.data.includes('ร้านเข้าติดตั้งหน้างาน') && csv.data.includes('ลูกค้ามารับสินค้าเอง'));
 });
+
+test('ลิงก์ Google Maps ตำแหน่งหน้างาน', async () => {
+  const token = await register('ร้านแผนที่', 'maps@shop.test');
+  const c = (await call('POST', '/customers', { token, body: { name: 'ลูกค้า' } })).data;
+  const typeId = (await call('GET', '/job-types', { token })).data[0].id;
+  const base = { customer_id: c.id, title: 'ป้าย', job_type_id: typeId, delivery_method: 'shop_install', install_address: 'หน้างาน' };
+  const post = (location_url) => call('POST', '/jobs', { token, body: { ...base, location_url } });
+
+  // ลิงก์ Google Maps แบบต่าง ๆ ที่ได้จากปุ่มแชร์
+  for (const ok of [
+    'https://maps.app.goo.gl/AbCdEf123',
+    'https://goo.gl/maps/xyz',
+    'https://www.google.com/maps/place/Bangkok/@13.75,100.5,15z',
+    'https://www.google.co.th/maps?q=13.7,100.5',
+    'https://maps.google.com/?q=13.7,100.5',
+  ]) {
+    const r = await post(ok);
+    assert.equal(r.status, 201, ok);
+    assert.ok(r.data.location_url.startsWith('https://'), ok);
+  }
+  // พิกัด → แปลงเป็นลิงก์
+  assert.equal((await post('13.7563, 100.5018')).data.location_url, 'https://www.google.com/maps?q=13.7563,100.5018');
+  // http → https
+  assert.equal((await post('http://maps.app.goo.gl/x')).data.location_url, 'https://maps.app.goo.gl/x');
+
+  // ลิงก์ที่ไม่ใช่ Google Maps / ลิงก์อันตราย / พิกัดเกินช่วง ต้องถูกปฏิเสธ
+  for (const bad of [
+    'javascript:alert(1)',
+    'https://evil.example.com/maps',
+    'https://www.google.com/search?q=x',
+    'https://maps.app.goo.gl.evil.com/x',
+    'data:text/html,hi',
+    '99.1, 200.5',
+    'ไม่ใช่ลิงก์',
+  ]) {
+    const r = await post(bad);
+    assert.equal(r.status, 400, bad);
+    assert.match(r.data.error, /Google Maps/);
+  }
+
+  // ลบลิงก์ได้ (ส่งค่าว่าง)
+  const job = (await post('https://maps.app.goo.gl/AbC')).data;
+  const cleared = await call('PUT', `/jobs/${job.id}`, { token, body: { location_url: '' } });
+  assert.equal(cleared.data.location_url, null);
+});

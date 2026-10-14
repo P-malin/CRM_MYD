@@ -34,6 +34,35 @@ function date(v, field) {
   return s;
 }
 
+// ลิงก์ตำแหน่งหน้างาน: รับเฉพาะลิงก์ Google Maps หรือพิกัด "lat, lng" (แปลงเป็นลิงก์ให้)
+const MAPS_ERROR = 'ลิงก์ Google Maps ไม่ถูกต้อง — วางลิงก์จากปุ่ม "แชร์" ใน Google Maps หรือพิกัด เช่น 13.7563, 100.5018';
+function mapsUrl(v) {
+  const s = str(v);
+  if (s === null) return null;
+  const coords = s.match(/^(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)$/);
+  if (coords) {
+    const [lat, lng] = [Number(coords[1]), Number(coords[2])];
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) throw new HttpError(400, MAPS_ERROR);
+    return `https://www.google.com/maps?q=${lat},${lng}`;
+  }
+  let url;
+  try {
+    url = new URL(s);
+  } catch {
+    throw new HttpError(400, MAPS_ERROR);
+  }
+  const host = url.hostname.toLowerCase();
+  const path = url.pathname;
+  const isMaps =
+    host === 'maps.app.goo.gl' ||
+    (host === 'goo.gl' && path.startsWith('/maps')) ||
+    /^maps\.google\.[a-z.]+$/.test(host) ||
+    (/^(www\.)?google\.[a-z.]+$/.test(host) && path.startsWith('/maps'));
+  if (!['https:', 'http:'].includes(url.protocol) || !isMaps || s.length > 2000) throw new HttpError(400, MAPS_ERROR);
+  url.protocol = 'https:';
+  return url.href;
+}
+
 function intId(v) {
   const n = Number(v);
   if (!Number.isInteger(n) || n <= 0) throw new HttpError(404, 'ไม่พบข้อมูล');
@@ -51,4 +80,4 @@ function pagination(query) {
   return { limit, offset };
 }
 
-module.exports = { HttpError, str, requireStr, num, oneOf, date, intId, today, pagination };
+module.exports = { HttpError, str, requireStr, num, oneOf, date, mapsUrl, intId, today, pagination };

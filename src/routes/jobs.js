@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireRole } = require('../auth');
-const { HttpError, str, requireStr, num, oneOf, date, intId, today, pagination } = require('../util');
+const { HttpError, str, requireStr, num, oneOf, date, mapsUrl, intId, today, pagination } = require('../util');
 const { STATUS_KEYS, OPEN_STATUSES, PRIORITIES, PAYMENT_KINDS, PAYMENT_METHODS, DELIVERY_METHODS } = require('../constants');
 
 const PRIORITY_KEYS = PRIORITIES.map((p) => p.key);
@@ -54,6 +54,7 @@ module.exports = function jobRoutes(db) {
       delivery_method: oneOf(pick('delivery_method'), DELIVERY_KEYS, 'วิธีส่งมอบ', null),
       install_required: false,
       install_address: str(pick('install_address')), // ที่อยู่จัดส่ง/ติดตั้ง
+      location_url: mapsUrl(pick('location_url')), // ลิงก์ Google Maps หน้างาน
     };
     if (!d.customer_id) throw new HttpError(400, 'กรุณาเลือกลูกค้า');
     if (!Number.isInteger(d.quantity) || !Number.isInteger(d.customer_id)) throw new HttpError(400, 'จำนวนต้องเป็นจำนวนเต็ม');

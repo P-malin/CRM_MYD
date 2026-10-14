@@ -23,6 +23,7 @@ const isOpen = (status) => state.meta.OPEN_STATUSES.includes(status);
 const isOverdue = (j) => j.due_date && isOpen(j.status) && j.due_date < todayStr();
 const dueHtml = (j) => (j.due_date ? `<span class="${isOverdue(j) ? 'overdue' : ''}">${thDate(j.due_date)}</span>` : '<span class="muted">-</span>');
 const prioTag = (p) => (p && p !== 'normal' ? `<span class="tag ${esc(p)}">${esc(label(state.meta.PRIORITIES, p))}</span>` : '');
+const mapsSearchUrl = (q) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
 const isAdmin = () => ['owner', 'admin'].includes(state.me?.user.role);
 const size = (j) => (j.width_cm || j.height_cm ? `${j.width_cm ?? '?'} × ${j.height_cm ?? '?'} ซม.` : '-');
 const options = (list, selected, { empty } = {}) =>
@@ -336,7 +337,11 @@ async function jobForm(job = {}) {
       <div class="full"><label id="desc-label">รายละเอียดงาน</label><textarea name="description">${v('description')}</textarea></div>
       <div class="full"><label>วิธีส่งมอบ *</label><select name="delivery_method" ${editing && !job.delivery_method ? '' : 'required'}>
         ${options(state.meta.DELIVERY_METHODS, job.delivery_method, { empty: '-- เลือกวิธีส่งมอบ --' })}</select></div>
-      <div class="full" id="addr-row"><label id="addr-label">ที่อยู่จัดส่ง/ติดตั้ง</label><textarea name="install_address" placeholder="ที่อยู่ / จุดสังเกต / ผู้ติดต่อหน้างาน">${v('install_address')}</textarea></div>
+      <div class="full" id="addr-row"><label id="addr-label">ที่อยู่จัดส่ง/ติดตั้ง</label><textarea name="install_address" placeholder="ที่อยู่ / จุดสังเกต / ผู้ติดต่อหน้างาน">${v('install_address')}</textarea>
+        <label style="margin-top:10px">📍 ลิงก์ Google Maps ตำแหน่งหน้างาน</label>
+        <div style="display:flex;gap:8px"><input name="location_url" value="${v('location_url')}" placeholder="วางลิงก์จาก Google Maps หรือพิกัด เช่น 13.7563, 100.5018">
+          <button type="button" class="btn nowrap" id="find-map">ค้นหาในแผนที่</button></div>
+        <div class="muted" style="font-size:13px;margin-top:4px">เปิด Google Maps → ปักหมุดหน้างาน → กด "แชร์" → คัดลอกลิงก์ แล้ววางที่นี่</div></div>
       <div class="full error"></div>
       <div class="full form-actions"><button type="button" class="btn" data-close>ยกเลิก</button><button class="btn primary" type="submit">บันทึก</button></div>
     </form>`, async (data) => {
@@ -360,8 +365,13 @@ async function jobForm(job = {}) {
     const m = state.meta.DELIVERY_METHODS.find((x) => x.key === form.delivery_method.value);
     form.install_address.required = Boolean(m?.needs_address);
     form.querySelector('#addr-label').textContent = m?.needs_address ? 'ที่อยู่จัดส่ง/ติดตั้ง *' : 'ที่อยู่จัดส่ง/ติดตั้ง';
-    form.querySelector('#addr-row').classList.toggle('hidden', Boolean(m && !m.needs_address) && !form.install_address.value);
+    form.querySelector('#addr-row').classList.toggle('hidden', Boolean(m && !m.needs_address) && !form.install_address.value && !form.location_url.value);
   };
+  // เปิด Google Maps ค้นหาจากที่อยู่ที่กรอก เพื่อช่วยหาและคัดลอกลิงก์
+  form.querySelector('#find-map').addEventListener('click', () => {
+    const q = form.install_address.value.trim();
+    window.open(q ? mapsSearchUrl(q) : 'https://www.google.com/maps', '_blank', 'noopener');
+  });
   form.delivery_method.addEventListener('change', syncDelivery);
   syncDelivery();
 }
@@ -398,7 +408,7 @@ async function viewJobs(params) {
         <div class="t">${esc(j.title)}</div>
         <div class="meta"><span>${esc(j.customer_name)}</span><span>${dueHtml(j)}</span></div>
         <div class="meta"><span>${esc(j.sign_type || '')}</span><span>${esc(j.assigned_name || '')}</span></div>
-        ${j.delivery_method ? `<div class="meta"><span>🚚 ${esc(label(state.meta.DELIVERY_METHODS, j.delivery_method))}</span></div>` : ''}
+        ${j.delivery_method ? `<div class="meta"><span>🚚 ${esc(label(state.meta.DELIVERY_METHODS, j.delivery_method))}</span>${j.location_url ? `<a href="${esc(j.location_url)}" target="_blank" rel="noopener noreferrer" title="เปิดแผนที่หน้างาน">📍</a>` : ''}</div>` : ''}
       </div>`).join('')}</div>`;
   }).join('')}</div>`;
 
@@ -465,6 +475,9 @@ async function viewJob(id) {
         <dt>กำหนดส่ง</dt><dd>${dueHtml(j)}${isOverdue(j) ? ' (เลยกำหนด)' : ''}</dd>
         <dt>ผู้รับผิดชอบ</dt><dd>${esc(j.assigned_name || '-')}</dd>
         <dt>วิธีส่งมอบ</dt><dd>${j.delivery_method ? esc(label(M.DELIVERY_METHODS, j.delivery_method)) : j.install_required ? 'ต้องติดตั้ง' : '-'}${j.install_address ? `\n${esc(j.install_address)}` : ''}</dd>
+        ${j.location_url || j.install_address ? `<dt>แผนที่หน้างาน</dt><dd>${j.location_url
+          ? `<a class="btn small" href="${esc(j.location_url)}" target="_blank" rel="noopener noreferrer">📍 เปิดแผนที่ / นำทาง</a>`
+          : `<a href="${esc(mapsSearchUrl(j.install_address))}" target="_blank" rel="noopener noreferrer">ค้นหาที่อยู่ใน Google Maps</a> <span class="muted">(ยังไม่ได้ใส่ลิงก์)</span>`}</dd>` : ''}
         <dt>รายละเอียด</dt><dd>${esc(j.description || '-')}</dd>
         <dt>วันที่รับงาน</dt><dd>${thDateTime(j.created_at)}</dd>
         ${j.completed_at ? `<dt>วันที่เสร็จ</dt><dd>${thDateTime(j.completed_at)}</dd>` : ''}
