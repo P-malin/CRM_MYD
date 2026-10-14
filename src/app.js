@@ -33,6 +33,7 @@ function createApp(db) {
   api.use(lineSettingsRoutes(db));
   api.use(require('./routes/jobs')(db));
   api.use(require('./routes/quotations')(db));
+  api.use(require('./routes/receipts')(db));
   api.use(require('./routes/reports')(db));
   api.use((req, res) => res.status(404).json({ error: 'ไม่พบ API นี้' }));
 

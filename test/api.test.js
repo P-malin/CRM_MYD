@@ -525,3 +525,90 @@ test('ลืมรหัสผ่าน / ตั้งรหัสผ่าน�
   else process.env.MAIL_CAPTURE = before;
   if (saved.host) process.env.SMTP_HOST = saved.host;
 });
+
+test('ใบเสร็จรับเงิน / ใบกำกับภาษี', async () => {
+  const token = await register('ร้านใบเสร็จ', 'receipt@shop.test');
+  const other = await register('ร้านอื่น', 'receipt-other@shop.test');
+  const c = (await call('POST', '/customers', {
+    token, body: { name: 'คุณสมชาย', company: 'บจก. สุขใจ', address: '1 ถ.สีลม กรุงเทพฯ', tax_id: '0105550000001', branch: 'สาขาที่ 00002' },
+  })).data;
+  assert.equal(c.branch, 'สาขาที่ 00002');
+  const typeId = (await call('GET', '/job-types', { token })).data[0].id;
+  const job = (await call('POST', '/jobs', {
+    token, body: { customer_id: c.id, title: 'ป้ายหน้าร้าน', job_type_id: typeId, delivery_method: 'customer_pickup', price: 10700, deposit: 5350, deposit_method: 'transfer' },
+  })).data;
+  const depositId = (await call('GET', `/jobs/${job.id}`, { token })).data.payments[0].id;
+
+  // ร้านยังไม่จด VAT → ร่างเป็นใบเสร็จ, ออกใบกำกับภาษีไม่ได้
+  let draft = (await call('GET', `/receipts/draft/${depositId}`, { token })).data;
+  assert.equal(draft.doc_type, 'receipt');
+  assert.equal(draft.customer_name, 'บจก. สุขใจ');
+  assert.equal(draft.customer_branch, 'สาขาที่ 00002');
+  assert.ok(draft.description.includes('ป้ายหน้าร้าน') && draft.description.includes('มัดจำ'));
+  assert.equal((await call('POST', '/receipts', { token, body: { ...draft, doc_type: 'tax_invoice' } })).status, 400);
+
+  // จด VAT แต่ยังไม่มีเลขผู้เสียภาษีร้าน → ออกใบกำกับไม่ได้
+  await call('PUT', '/tenant', { token, body: { name: 'ร้านใบเสร็จ', vat_registered: true } });
+  assert.match((await call('POST', '/receipts', { token, body: { ...draft, doc_type: 'tax_invoice' } })).data.error, /เลขประจำตัวผู้เสียภาษี/);
+  const shop = await call('PUT', '/tenant', { token, body: { name: 'ร้านใบเสร็จ', vat_registered: true, tax_id: '0105561234567', branch_name: 'สำนักงานใหญ่', address: '9 ถ.พระราม 4' } });
+  assert.equal(shop.data.vat_registered, true);
+
+  // ใบกำกับภาษี: แยก VAT จากยอดรับ (5,350 = 5,000 + 350)
+  draft = (await call('GET', `/receipts/draft/${depositId}`, { token })).data;
+  assert.equal(draft.doc_type, 'tax_invoice');
+  const iv = await call('POST', '/receipts', { token, body: { ...draft, subtotal: 1, total: 1 } });
+  assert.equal(iv.status, 201);
+  assert.match(iv.data.doc_no, /^IV\d{4}-0001$/);
+  assert.equal(iv.data.total, 5350);
+  assert.equal(iv.data.subtotal, 5000);
+  assert.equal(iv.data.vat_amount, 350);
+  assert.equal(iv.data.payment_method, 'transfer');
+  // ใบกำกับภาษีต้องมีที่อยู่ลูกค้า
+  // ออกซ้ำจากการชำระเดียวกันไม่ได้
+  assert.equal((await call('POST', '/receipts', { token, body: draft })).status, 409);
+
+  // หน้างานแสดงเลขใบเสร็จของการชำระ; ลบการชำระ/ลบงานที่มีใบเสร็จไม่ได้
+  const detail = (await call('GET', `/jobs/${job.id}`, { token })).data;
+  assert.equal(detail.payments[0].receipt_no, iv.data.doc_no);
+  assert.equal((await call('DELETE', `/jobs/${job.id}/payments/${depositId}`, { token })).status, 409);
+  assert.equal((await call('DELETE', `/jobs/${job.id}`, { token })).status, 409);
+
+  // ใบเสร็จธรรมดา (ไม่แยก VAT) จากการชำระงวดถัดไป, เลขรันแยกตามประเภท
+  await call('POST', `/jobs/${job.id}/payments`, { token, body: { amount: 5350, kind: 'final', method: 'cash' } });
+  const finalId = (await call('GET', `/jobs/${job.id}`, { token })).data.payments.at(-1).id;
+  const d2 = (await call('GET', `/receipts/draft/${finalId}`, { token })).data;
+  assert.equal((await call('POST', '/receipts', { token, body: { ...d2, doc_type: 'tax_invoice', customer_address: '' } })).status, 400);
+  const rc = (await call('POST', '/receipts', { token, body: { ...d2, doc_type: 'receipt' } })).data;
+  assert.match(rc.doc_no, /^RC\d{4}-0001$/);
+  assert.equal(rc.vat_amount, 0);
+  assert.equal(rc.subtotal, 5350);
+
+  // ยกเลิก: ต้องมีเหตุผล, พนักงานยกเลิกไม่ได้, ยกเลิกแล้วออกใหม่ได้ (เลขถัดไป)
+  await call('POST', '/users', { token, body: { name: 'พนักงาน', email: 'receipt-staff@shop.test', password: 'password123' } });
+  const staff = (await call('POST', '/auth/login', { body: { email: 'receipt-staff@shop.test', password: 'password123' } })).data.token;
+  assert.equal((await call('POST', `/receipts/${iv.data.id}/void`, { token: staff, body: { reason: 'x' } })).status, 403);
+  assert.equal((await call('POST', `/receipts/${iv.data.id}/void`, { token, body: {} })).status, 400);
+  const voided = (await call('POST', `/receipts/${iv.data.id}/void`, { token, body: { reason: 'ชื่อลูกค้าผิด' } })).data;
+  assert.equal(voided.status, 'void');
+  assert.equal(voided.void_reason, 'ชื่อลูกค้าผิด');
+  assert.equal((await call('POST', `/receipts/${iv.data.id}/void`, { token, body: { reason: 'again' } })).status, 400);
+  const iv2 = (await call('POST', '/receipts', { token, body: { ...draft, customer_name: 'บริษัท สุขใจ จำกัด' } })).data;
+  assert.match(iv2.doc_no, /-0002$/);
+  // ยังลบการชำระไม่ได้ แม้ใบเดิมถูกยกเลิก (เก็บประวัติเอกสาร)
+  assert.equal((await call('DELETE', `/jobs/${job.id}/payments/${depositId}`, { token })).status, 409);
+
+  // รายการ / ค้นหา / ข้อมูลร้านสำหรับหัวเอกสาร
+  assert.equal((await call('GET', '/receipts', { token })).data.total, 3);
+  assert.equal((await call('GET', '/receipts?status=void', { token })).data.total, 1);
+  assert.equal((await call('GET', '/receipts?type=receipt', { token })).data.total, 1);
+  const full = (await call('GET', `/receipts/${iv2.id}`, { token })).data;
+  assert.equal(full.shop.tax_id, '0105561234567');
+  assert.equal(full.shop.branch_name, 'สำนักงานใหญ่');
+
+  // ร้านอื่นเข้าถึงไม่ได้
+  assert.equal((await call('GET', `/receipts/${iv2.id}`, { token: other })).status, 404);
+  assert.equal((await call('GET', `/receipts/draft/${depositId}`, { token: other })).status, 404);
+  assert.equal((await call('POST', '/receipts', { token: other, body: { ...draft } })).status, 400);
+  assert.equal((await call('POST', `/receipts/${iv2.id}/void`, { token: other, body: { reason: 'x' } })).status, 404);
+  assert.equal((await call('GET', '/receipts', { token: other })).data.total, 0);
+});

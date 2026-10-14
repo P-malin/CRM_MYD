@@ -79,6 +79,12 @@ const QUOTE_STATUSES = [
   { key: 'rejected', label: 'ไม่อนุมัติ', color: '#dc2626' },
 ];
 
+// ประเภทเอกสารรับเงิน (tax_invoice ออกได้เฉพาะร้านที่จด VAT)
+const RECEIPT_TYPES = [
+  { key: 'receipt', label: 'ใบเสร็จรับเงิน', en: 'RECEIPT', prefix: 'RC' },
+  { key: 'tax_invoice', label: 'ใบเสร็จรับเงิน/ใบกำกับภาษี', en: 'RECEIPT / TAX INVOICE', prefix: 'IV' },
+];
+
 const ROLES = [
   { key: 'owner', label: 'เจ้าของร้าน' },
   { key: 'admin', label: 'ผู้ดูแล' },
@@ -95,5 +101,6 @@ module.exports = {
   PAYMENT_KINDS,
   PAYMENT_METHODS,
   QUOTE_STATUSES,
+  RECEIPT_TYPES,
   ROLES,
 };

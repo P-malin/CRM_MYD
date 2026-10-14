@@ -157,6 +157,14 @@ dl.info dt { color: var(--muted); } dl.info dd { margin: 0; white-space: pre-wra
 .doc-sign > div { flex: 1; max-width: 240px; }
 .sign-line { border-bottom: 1px dotted #6b7280; height: 40px; margin-bottom: 6px; }
 
+/* receipt document */
+.doc { position: relative; }
+.doc-copy { display: inline-block; border: 1.5px solid var(--primary); color: var(--primary); border-radius: 6px; padding: 1px 10px; font-size: 12px; font-weight: 700; margin-bottom: 6px; }
+.doc-title-th.long { font-size: 21px; }
+.doc.void::after { content: 'ยกเลิก'; position: absolute; top: 38%; left: 50%; transform: translate(-50%, -50%) rotate(-24deg); font-size: 120px; font-weight: 900; color: rgb(220 38 38 / .18); border: 10px solid rgb(220 38 38 / .18); padding: 0 40px; border-radius: 24px; pointer-events: none; }
+.void-note { max-width: 210mm; margin: 0 auto 12px; background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 10px 14px; border-radius: 8px; }
+.rc-preview { background: #f8fafc; border-radius: 8px; padding: 8px 12px; }
+
 /* chart */
 .bars { display: flex; align-items: flex-end; gap: 10px; height: 200px; padding-top: 10px; overflow-x: auto; }
 .bar-group { display: flex; flex-direction: column; align-items: center; min-width: 46px; flex: 1; height: 100%; }
@@ -212,7 +220,7 @@ body:has(.auth) { background: radial-gradient(1200px 600px at 10% -10%, #dbeafe 
 @media print {
   .no-print, .toast, .modal { display: none !important; }
   .doc { box-shadow: none; margin: 0; width: auto; min-height: auto; }
-  .doc-items th, .doc-baht, .doc-totals .grand th, .doc-totals .grand td, .doc-cust { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .doc.void::after, .doc-copy, .doc-items th, .doc-baht, .doc-totals .grand th, .doc-totals .grand td, .doc-cust { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .side, .toolbar, .btn { display: none !important; }
   .shell { grid-template-columns: 1fr; } body { background: #fff; }
 }

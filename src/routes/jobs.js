@@ -147,7 +147,9 @@ module.exports = function jobRoutes(db) {
       [job.id, t],
     );
     job.payments = await db.query(
-      `SELECT p.*, u.name AS user_name FROM payments p LEFT JOIN users u ON u.id = p.user_id
+      `SELECT p.*, u.name AS user_name, rc.id AS receipt_id, rc.doc_no AS receipt_no
+       FROM payments p LEFT JOIN users u ON u.id = p.user_id
+       LEFT JOIN receipts rc ON rc.payment_id = p.id AND rc.status = 'issued'
        WHERE p.job_id = ? AND p.tenant_id = ? ORDER BY p.paid_at, p.id`,
       [job.id, t],
     );
@@ -255,13 +257,20 @@ module.exports = function jobRoutes(db) {
   r.delete('/jobs/:id/payments/:pid', requireRole('owner', 'admin'), async (req, res) => {
     const t = req.user.tenant_id;
     const job = await getJob(t, intId(req.params.id));
-    const { rowCount } = await db.run('DELETE FROM payments WHERE id = ? AND job_id = ? AND tenant_id = ?', [intId(req.params.pid), job.id, t]);
+    const pid = intId(req.params.pid);
+    if (await db.one('SELECT 1 FROM receipts WHERE payment_id = ? LIMIT 1', [pid])) {
+      throw new HttpError(409, 'รายการนี้ออกใบเสร็จแล้ว ลบไม่ได้ — ถ้าบันทึกผิด ให้ยกเลิกใบเสร็จแล้วบันทึกรายการแก้ไขแทน');
+    }
+    const { rowCount } = await db.run('DELETE FROM payments WHERE id = ? AND job_id = ? AND tenant_id = ?', [pid, job.id, t]);
     if (!rowCount) throw new HttpError(404, 'ไม่พบรายการชำระเงิน');
     res.json(await getJob(t, job.id));
   });
 
   r.delete('/jobs/:id', requireRole('owner', 'admin'), async (req, res) => {
     const job = await getJob(req.user.tenant_id, intId(req.params.id));
+    if (await db.one('SELECT 1 FROM receipts WHERE job_id = ? LIMIT 1', [job.id])) {
+      throw new HttpError(409, 'งานนี้มีใบเสร็จ/ใบกำกับภาษีแล้ว ลบไม่ได้ — เปลี่ยนสถานะเป็น "ยกเลิก" แทน');
+    }
     await db.run('DELETE FROM jobs WHERE id = ?', [job.id]);
     res.json({ ok: true });
   });

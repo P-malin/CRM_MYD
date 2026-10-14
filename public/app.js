@@ -231,6 +231,7 @@ const NAV = [
   ['jobs', '🛠️ งาน'],
   ['customers', '👥 ลูกค้า'],
   ['quotes', '📄 ใบเสนอราคา'],
+  ['receipts', '🧾 ใบเสร็จ'],
   ['reports', '📈 รายงาน'],
   ['settings', '⚙️ ตั้งค่า'],
 ];
@@ -298,6 +299,7 @@ function customerFormHtml(c = {}) {
     ${f('name', 'ชื่อลูกค้า / ผู้ติดต่อ *', 'required')}${f('company', 'บริษัท / ร้าน')}
     ${f('phone', 'เบอร์โทร')}${f('line_id', 'LINE ID')}
     ${f('email', 'อีเมล', 'type="email"')}${f('tax_id', 'เลขผู้เสียภาษี')}
+    ${f('branch', 'สาขา (สำหรับใบกำกับภาษี)', 'placeholder="เช่น สำนักงานใหญ่ / สาขาที่ 00001"')}
     <div class="full"><label>ที่อยู่</label><textarea name="address">${esc(c.address)}</textarea></div>
     <div class="full"><label>หมายเหตุ</label><textarea name="note">${esc(c.note)}</textarea></div>
     <div class="full error"></div>
@@ -584,10 +586,11 @@ async function viewJob(id, seq) {
           <div class="money-row"><span>ชำระแล้ว</span><span>${baht(j.paid)}</span></div>
           <div class="progress"><span style="width:${pct}%"></span></div>
           <div class="money-row total"><span>คงค้าง</span><span class="${remaining > 0 ? 'overdue' : ''}">${baht(remaining)}</span></div>
-          ${j.payments.length ? `<table style="margin-top:10px"><tr><th>วันที่</th><th>ประเภท</th><th>ช่องทาง</th><th class="right">จำนวน</th>${isAdmin() ? '<th></th>' : ''}</tr>
+          ${j.payments.length ? `<div class="table-wrap"><table style="margin-top:10px"><tr><th>วันที่</th><th>ประเภท</th><th>ช่องทาง</th><th class="right">จำนวน</th><th>ใบเสร็จ</th>${isAdmin() ? '<th></th>' : ''}</tr>
             ${j.payments.map((p) => `<tr><td class="nowrap">${thDate(p.paid_at)}</td><td>${esc(label(M.PAYMENT_KINDS, p.kind))}${p.note ? `<div class="muted">${esc(p.note)}</div>` : ''}</td>
               <td>${esc(label(M.PAYMENT_METHODS, p.method))}</td><td class="right">${baht(p.amount)}</td>
-              ${isAdmin() ? `<td><button class="icon-btn" data-delpay="${p.id}" title="ลบรายการ">🗑</button></td>` : ''}</tr>`).join('')}</table>` : ''}
+              <td class="nowrap">${p.receipt_id ? `<a href="#/receipts/${p.receipt_id}">🧾 ${esc(p.receipt_no)}</a>` : `<button class="btn small" data-issue-receipt="${p.id}">ออกใบเสร็จ</button>`}</td>
+              ${isAdmin() ? `<td>${p.receipt_id ? '' : `<button class="icon-btn" data-delpay="${p.id}" title="ลบรายการ">🗑</button>`}</td>` : ''}</tr>`).join('')}</table></div>` : ''}
           <div style="margin-top:12px"><button class="btn" id="add-pay">+ บันทึกรับชำระ</button></div>
         </div>
       </div>
@@ -650,6 +653,7 @@ async function viewJob(id, seq) {
       route();
     });
   });
+  main.querySelectorAll('[data-issue-receipt]').forEach((b) => b.addEventListener('click', () => issueReceiptDialog(b.dataset.issueReceipt)));
   main.querySelectorAll('[data-delpay]').forEach((b) =>
     b.addEventListener('click', async () => {
       if (!confirm('ลบรายการชำระเงินนี้?')) return;
@@ -929,6 +933,167 @@ async function viewQuotePrint(id, seq) {
   $app.querySelector('#do-print').addEventListener('click', () => window.print());
 }
 
+// ---------- receipts / tax invoices ----------
+const receiptType = (key) => state.meta.RECEIPT_TYPES.find((t) => t.key === key) || { label: key, en: '' };
+const vatSplit = (total, type) => {
+  if (type !== 'tax_invoice') return { subtotal: total, vat: 0 };
+  const vat = Math.round(((total * 7) / 107) * 100) / 100;
+  return { subtotal: Math.round((total - vat) * 100) / 100, vat };
+};
+
+async function issueReceiptDialog(paymentId) {
+  let d;
+  try {
+    d = await api('GET', `/receipts/draft/${paymentId}`);
+  } catch (ex) {
+    return toast(ex.message, true);
+  }
+  const types = state.meta.RECEIPT_TYPES.filter((t) => t.key === 'receipt' || d.vat_registered);
+  openModal('ออกใบเสร็จรับเงิน', `<form class="form" id="rc-form">
+    <div class="full"><label>ประเภทเอกสาร</label><select name="doc_type">${options(types, d.doc_type)}</select>
+      ${d.vat_registered ? '' : '<div class="muted" style="font-size:13px;margin-top:4px">ถ้าร้านจดทะเบียน VAT ให้ติ๊ก "ร้านจดทะเบียนภาษีมูลค่าเพิ่ม" ที่ ตั้งค่า → ข้อมูลร้าน เพื่อออกใบกำกับภาษีได้</div>'}</div>
+    <div><label>วันที่</label><input name="issue_date" type="date" value="${esc(d.issue_date)}"></div>
+    <div><label>จำนวนเงินที่รับ</label><input value="${money(d.amount)}" disabled></div>
+    <div class="full"><label>ชื่อลูกค้า / บริษัท *</label><input name="customer_name" required value="${esc(d.customer_name)}"></div>
+    <div class="full"><label id="rc-addr-label">ที่อยู่</label><textarea name="customer_address" rows="2">${esc(d.customer_address)}</textarea></div>
+    <div><label>เลขประจำตัวผู้เสียภาษี</label><input name="customer_tax_id" value="${esc(d.customer_tax_id)}"></div>
+    <div><label>สาขา</label><input name="customer_branch" value="${esc(d.customer_branch)}" placeholder="เช่น สำนักงานใหญ่ / สาขาที่ 00001"></div>
+    <div class="full"><label>รายการ *</label><textarea name="description" rows="2" required>${esc(d.description)}</textarea></div>
+    <div class="full"><label>หมายเหตุ</label><input name="notes"></div>
+    <div class="full rc-preview" id="rc-preview"></div>
+    <div class="full muted" style="font-size:13px">⚠️ ออกเอกสารแล้วแก้ไขไม่ได้ ถ้าผิดให้ยกเลิกแล้วออกใบใหม่</div>
+    <div class="full error"></div>
+    <div class="full form-actions"><button type="button" class="btn" data-close>ยกเลิก</button><button class="btn primary" type="submit">ออกเอกสาร</button></div>
+  </form>`, async (data) => {
+    const rc = await api('POST', '/receipts', { ...data, payment_id: d.payment_id });
+    toast(`ออก ${rc.doc_no} แล้ว`);
+    location.hash = `#/receipts/${rc.id}`;
+  });
+  const form = $modal.querySelector('#rc-form');
+  const sync = () => {
+    const type = form.doc_type.value;
+    const v = vatSplit(Number(d.amount), type);
+    form.customer_address.required = type === 'tax_invoice';
+    form.querySelector('#rc-addr-label').textContent = type === 'tax_invoice' ? 'ที่อยู่ * (จำเป็นสำหรับใบกำกับภาษี)' : 'ที่อยู่';
+    form.querySelector('#rc-preview').innerHTML = type === 'tax_invoice'
+      ? `<div class="money-row"><span>มูลค่าสินค้า/บริการ</span><span>${money(v.subtotal)}</span></div>
+         <div class="money-row"><span>ภาษีมูลค่าเพิ่ม 7%</span><span>${money(v.vat)}</span></div>
+         <div class="money-row total"><span>รวมทั้งสิ้น</span><span>${money(d.amount)}</span></div>`
+      : `<div class="money-row total"><span>รวมทั้งสิ้น</span><span>${money(d.amount)}</span></div>`;
+  };
+  form.doc_type.addEventListener('change', sync);
+  sync();
+}
+
+async function viewReceipts(params, seq) {
+  const q = params.get('q') || '';
+  const type = params.get('type') || '';
+  const status = params.get('status') || '';
+  const data = await api('GET', `/receipts?limit=200&q=${encodeURIComponent(q)}&type=${type}&status=${status}`);
+  const main = shell(seq, 'receipts', `
+    <div class="page-head"><h1>ใบเสร็จรับเงิน / ใบกำกับภาษี <span class="muted">(${data.total})</span></h1></div>
+    <p class="muted" style="margin-top:-8px">ออกเอกสารได้จากหน้างาน → การชำระเงิน → ปุ่ม "ออกใบเสร็จ"</p>
+    <form class="toolbar" id="search">
+      <input name="q" placeholder="ค้นหาเลขที่, ลูกค้า, งาน" value="${esc(q)}" style="min-width:220px">
+      <select name="type">${options(state.meta.RECEIPT_TYPES, type, { empty: 'ทุกประเภท' })}</select>
+      <select name="status">${options([{ key: 'issued', label: 'ใช้งาน' }, { key: 'void', label: 'ยกเลิกแล้ว' }], status, { empty: 'ทุกสถานะ' })}</select>
+      <button class="btn">ค้นหา</button>
+    </form>
+    <div class="card table-wrap">${data.rows.length ? `<table>
+      <tr><th>เลขที่</th><th>วันที่</th><th>ประเภท</th><th>ลูกค้า</th><th>งาน</th><th class="right">ยอดรวม</th><th class="right">VAT</th><th></th></tr>
+      ${data.rows.map((x) => `<tr class="click" data-href="#/receipts/${x.id}">
+        <td class="nowrap">${esc(x.doc_no)}</td><td class="nowrap">${thDate(x.issue_date)}</td><td>${esc(receiptType(x.doc_type).label)}</td>
+        <td>${esc(x.customer_name)}</td><td>${esc(x.job_no)}</td><td class="right">${baht(x.total)}</td><td class="right">${Number(x.vat_amount) ? baht(x.vat_amount) : '-'}</td>
+        <td>${x.status === 'void' ? badge('ยกเลิก', '#dc2626') : ''}</td></tr>`).join('')}
+    </table>` : '<p class="muted">ยังไม่มีเอกสาร</p>'}</div>`);
+  main.querySelector('#search').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const f = formData(e.target);
+    location.hash = `#/receipts?q=${encodeURIComponent(f.q)}&type=${f.type}&status=${f.status}`;
+  });
+}
+
+// เอกสารใบเสร็จ (A4) — ดู / พิมพ์ / บันทึก PDF / ยกเลิก
+async function viewReceipt(id, params, seq) {
+  const rc = await api('GET', `/receipts/${id}`);
+  if (seq !== routeSeq) return;
+  const s = rc.shop;
+  const t = receiptType(rc.doc_type);
+  const copy = params.get('copy') === '1';
+  const isTax = rc.doc_type === 'tax_invoice';
+  const voided = rc.status === 'void';
+  document.title = `${rc.doc_no} — ${t.label}`;
+  $app.innerHTML = `
+    <div class="print-bar no-print">
+      <a class="btn" href="#/jobs/${rc.job_id}">← งาน ${esc(rc.job_no)}</a>
+      <div class="toolbar" style="margin:0">
+        <a class="btn small ${copy ? '' : 'primary'}" href="#/receipts/${rc.id}">ต้นฉบับ</a>
+        <a class="btn small ${copy ? 'primary' : ''}" href="#/receipts/${rc.id}?copy=1">สำเนา</a>
+        ${!voided && isAdmin() ? '<button class="btn small danger" id="rc-void">ยกเลิกเอกสาร</button>' : ''}
+        <button class="btn primary" id="do-print">🖨 พิมพ์ / บันทึก PDF</button>
+      </div>
+    </div>
+    ${voided ? `<div class="void-note no-print">เอกสารนี้ถูกยกเลิกแล้ว เมื่อ ${thDateTime(rc.voided_at)} โดย ${esc(rc.voided_by_name || '-')} — เหตุผล: ${esc(rc.void_reason)}</div>` : ''}
+    <div class="doc ${voided ? 'void' : ''}">
+      <div class="doc-head">
+        <div class="doc-shop">
+          <div class="doc-shop-name">${esc(s.name)}</div>
+          ${s.address ? `<div class="pre">${esc(s.address)}</div>` : ''}
+          ${s.phone ? `<div>โทร ${esc(s.phone)}</div>` : ''}
+          ${s.email ? `<div>อีเมล ${esc(s.email)}</div>` : ''}
+          ${s.tax_id ? `<div>เลขประจำตัวผู้เสียภาษี ${esc(s.tax_id)}${s.branch_name ? ` (${esc(s.branch_name)})` : ''}</div>` : ''}
+        </div>
+        <div class="doc-title">
+          <div class="doc-copy">${copy ? 'สำเนา / COPY' : 'ต้นฉบับ / ORIGINAL'}</div>
+          <div class="doc-title-th ${isTax ? 'long' : ''}">${esc(t.label)}</div><div class="doc-title-en">${esc(t.en)}</div>
+          <table class="doc-meta">
+            <tr><th>เลขที่</th><td>${esc(rc.doc_no)}</td></tr>
+            <tr><th>วันที่</th><td>${thDateLong(rc.issue_date)}</td></tr>
+            <tr><th>อ้างอิงงาน</th><td>${esc(rc.job_no)}</td></tr>
+          </table>
+        </div>
+      </div>
+      <div class="doc-cust">
+        <div class="doc-label">ได้รับเงินจาก / ลูกค้า</div>
+        <div class="doc-cust-name">${esc(rc.customer_name)}</div>
+        ${rc.customer_address ? `<div class="pre">${esc(rc.customer_address)}</div>` : ''}
+        ${rc.customer_tax_id ? `<div>เลขประจำตัวผู้เสียภาษี ${esc(rc.customer_tax_id)}${rc.customer_branch ? ` · ${esc(rc.customer_branch)}` : ''}</div>` : ''}
+        ${rc.customer_phone ? `<div>โทร ${esc(rc.customer_phone)}</div>` : ''}
+      </div>
+      <table class="doc-items">
+        <thead><tr><th style="width:8%">ลำดับ</th><th>รายการ</th><th style="width:22%">จำนวนเงิน (บาท)</th></tr></thead>
+        <tbody><tr><td class="c">1</td><td class="pre">${esc(rc.description)}</td><td class="r">${money(isTax ? rc.subtotal : rc.total)}</td></tr></tbody>
+      </table>
+      <div class="doc-sum">
+        <div class="doc-sum-left">
+          <div class="doc-baht">(${esc(bahtText(rc.total))})</div>
+          <div>ชำระโดย: ${esc(label(state.meta.PAYMENT_METHODS, rc.payment_method))}${rc.paid_at ? ` วันที่ ${thDateLong(rc.paid_at)}` : ''}</div>
+          ${rc.notes ? `<div class="doc-label" style="margin-top:8px">หมายเหตุ</div><div class="pre">${esc(rc.notes)}</div>` : ''}
+        </div>
+        <table class="doc-totals">
+          ${isTax ? `<tr><th>มูลค่าสินค้า/บริการ</th><td>${money(rc.subtotal)}</td></tr><tr><th>ภาษีมูลค่าเพิ่ม ${Number(rc.vat_rate)}%</th><td>${money(rc.vat_amount)}</td></tr>` : ''}
+          <tr class="grand"><th>จำนวนเงินรวมทั้งสิ้น</th><td>${money(rc.total)}</td></tr>
+        </table>
+      </div>
+      <div class="doc-sign">
+        <div><div class="sign-line"></div><div>ผู้รับเงิน</div><div class="muted">วันที่ ......../......../........</div></div>
+        <div><div class="sign-line"></div><div>ผู้มีอำนาจลงนาม</div><div class="muted">${esc(s.name)}</div></div>
+      </div>
+    </div>`;
+  $app.querySelector('#do-print').addEventListener('click', () => window.print());
+  $app.querySelector('#rc-void')?.addEventListener('click', async () => {
+    const reason = prompt(`ยกเลิกเอกสาร ${rc.doc_no}\nกรุณาระบุเหตุผล (เช่น ชื่อลูกค้าผิด):`);
+    if (!reason || !reason.trim()) return;
+    try {
+      await api('POST', `/receipts/${rc.id}/void`, { reason });
+      toast('ยกเลิกเอกสารแล้ว — ออกใบใหม่ได้จากหน้างาน');
+      route();
+    } catch (ex) {
+      toast(ex.message, true);
+    }
+  });
+}
+
 // ---------- reports ----------
 function monthRange(offset) {
   const d = new Date();
@@ -1146,6 +1311,9 @@ async function viewSettings(seq) {
           <div><label>อีเมล</label><input name="email" type="email" value="${esc(t.email)}" ${admin ? '' : 'disabled'}></div>
           <div class="full"><label>เลขผู้เสียภาษี</label><input name="tax_id" value="${esc(t.tax_id)}" ${admin ? '' : 'disabled'}></div>
           <div class="full"><label>ที่อยู่</label><textarea name="address" ${admin ? '' : 'disabled'}>${esc(t.address)}</textarea></div>
+          <div class="full" style="margin-top:6px"><b>ภาษี / ใบกำกับภาษี</b></div>
+          <div class="check" style="align-self:end"><input type="checkbox" name="vat_registered" id="vr" ${t.vat_registered ? 'checked' : ''} ${admin ? '' : 'disabled'}><label for="vr" style="margin:0">ร้านจดทะเบียนภาษีมูลค่าเพิ่ม (VAT)</label></div>
+          <div><label>สาขา (บนใบกำกับภาษี)</label><input name="branch_name" value="${esc(t.branch_name)}" placeholder="สำนักงานใหญ่" ${admin ? '' : 'disabled'}></div>
           <div class="full" style="margin-top:6px"><b>ค่าเริ่มต้นใบเสนอราคา</b></div>
           <div><label>ยืนราคา (วัน)</label><input name="quote_validity_days" type="number" min="0" max="365" value="${t.quote_validity_days ?? 30}" ${admin ? '' : 'disabled'}></div>
           <div class="check" style="align-self:end"><input type="checkbox" name="quote_vat" id="qv" ${t.quote_vat !== false ? 'checked' : ''} ${admin ? '' : 'disabled'}><label for="qv" style="margin:0">คิด VAT 7%</label></div>
@@ -1355,6 +1523,8 @@ async function route() {
       case 'quotes':
         if (parts[1] && parts[2] === 'print') return await viewQuotePrint(parts[1], seq);
         return parts[1] ? await viewQuote(parts[1], seq) : await viewQuotes(params, seq);
+      case 'receipts':
+        return parts[1] ? await viewReceipt(parts[1], params, seq) : await viewReceipts(params, seq);
       case 'reports':
         return await viewReports(params, seq);
       case 'settings':

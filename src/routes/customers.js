@@ -2,7 +2,7 @@ const express = require('express');
 const { requireRole } = require('../auth');
 const { HttpError, str, requireStr, intId, pagination } = require('../util');
 
-const FIELDS = ['name', 'company', 'phone', 'email', 'line_id', 'address', 'tax_id', 'note'];
+const FIELDS = ['name', 'company', 'phone', 'email', 'line_id', 'address', 'tax_id', 'branch', 'note'];
 
 function readBody(b) {
   const out = {};
