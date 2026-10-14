@@ -22,6 +22,12 @@ const isOverdue = (j) => j.due_date && j.status_kind === 'open' && j.due_date < 
 const activeStatuses = () => state.jobStatuses.filter((x) => x.active);
 const dueHtml = (j) => (j.due_date ? `<span class="${isOverdue(j) ? 'overdue' : ''}">${thDate(j.due_date)}</span>` : '<span class="muted">-</span>');
 const prioTag = (p) => (p && p !== 'normal' ? `<span class="tag ${esc(p)}">${esc(label(state.meta.PRIORITIES, p))}</span>` : '');
+const money = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const thDateLong = (s) => (s ? parseDate(s).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }) : '-');
+const quoteBadge = (status) => {
+  const x = state.meta.QUOTE_STATUSES.find((q) => q.key === status) || { label: status, color: '#64748b' };
+  return badge(x.label, x.color);
+};
 const notifyText = (msg, n) =>
   n?.status === 'sent' ? `${msg} · แจ้ง LINE แล้ว` : n?.status === 'failed' ? `${msg} แต่ส่ง LINE ไม่สำเร็จ: ${n.error}` : msg;
 const mapsSearchUrl = (q) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
@@ -158,6 +164,7 @@ const NAV = [
   ['dashboard', '📊 แดชบอร์ด'],
   ['jobs', '🛠️ งาน'],
   ['customers', '👥 ลูกค้า'],
+  ['quotes', '📄 ใบเสนอราคา'],
   ['reports', '📈 รายงาน'],
   ['settings', '⚙️ ตั้งค่า'],
 ];
@@ -519,6 +526,11 @@ async function viewJob(id, seq) {
         </div>
       </div>
     </div>
+    <div class="card"><div class="page-head" style="margin-bottom:8px"><h2 style="margin:0">ใบเสนอราคา</h2><button class="btn" id="new-quote">+ สร้างใบเสนอราคา</button></div>
+      ${j.quotations.length ? `<table>${j.quotations.map((q) => `<tr class="click" data-href="#/quotes/${q.id}">
+        <td class="nowrap">${esc(q.quote_no)}</td><td>${thDate(q.issue_date)}</td><td>${quoteBadge(q.status)}</td><td class="right">${baht(q.total)}</td></tr>`).join('')}</table>`
+        : '<p class="muted" style="margin:0">ยังไม่มีใบเสนอราคา — กดสร้าง ระบบจะดึงข้อมูลลูกค้าและรายการจากงานนี้ให้</p>'}
+    </div>
     ${j.notifications?.length ? `<div class="card"><h2>การแจ้งเตือน LINE</h2><table>
       ${j.notifications.map((n) => `<tr><td class="nowrap">${thDateTime(n.created_at)}</td>
         <td>${n.status === 'sent' ? '<span class="ok-text">✓ ส่งเข้ากลุ่มแล้ว</span>' : `<span class="overdue">✗ ส่งไม่สำเร็จ</span> <span class="muted">${esc(n.error || '')}</span>`}</td></tr>`).join('')}
@@ -529,6 +541,15 @@ async function viewJob(id, seq) {
     </ul></div>`);
 
   main.querySelector('#edit').addEventListener('click', () => jobForm(j));
+  main.querySelector('#new-quote').addEventListener('click', async () => {
+    try {
+      const q = await api('POST', '/quotations', { job_id: j.id });
+      toast(`สร้างใบเสนอราคา ${q.quote_no} แล้ว`);
+      location.hash = `#/quotes/${q.id}`;
+    } catch (ex) {
+      toast(ex.message, true);
+    }
+  });
   const statusForm = main.querySelector('#status-form');
   const syncStatusHint = () => {
     const x = state.jobStatuses.find((y) => y.id === Number(statusForm.status_id.value));
@@ -576,6 +597,249 @@ async function viewJob(id, seq) {
     toast('ลบงานแล้ว');
     location.hash = '#/jobs';
   });
+}
+
+// ---------- quotations ----------
+async function viewQuotes(params, seq) {
+  const q = params.get('q') || '';
+  const status = params.get('status') || '';
+  const data = await api('GET', `/quotations?limit=200&q=${encodeURIComponent(q)}&status=${status}`);
+  const main = shell(seq, 'quotes', `
+    <div class="page-head"><h1>ใบเสนอราคา <span class="muted">(${data.total})</span></h1></div>
+    <p class="muted" style="margin-top:-8px">สร้างใบเสนอราคาได้จากหน้ารายละเอียดงาน (ปุ่ม "+ สร้างใบเสนอราคา")</p>
+    <form class="toolbar" id="search">
+      <input name="q" placeholder="ค้นหาเลขที่, ลูกค้า, งาน" value="${esc(q)}" style="min-width:240px">
+      <select name="status">${options(state.meta.QUOTE_STATUSES, status, { empty: 'ทุกสถานะ' })}</select>
+      <button class="btn">ค้นหา</button>
+    </form>
+    <div class="card table-wrap">${data.rows.length ? `<table>
+      <tr><th>เลขที่</th><th>วันที่</th><th>ลูกค้า</th><th>งาน</th><th>สถานะ</th><th class="right">ยอดรวม</th><th>ยืนราคาถึง</th></tr>
+      ${data.rows.map((x) => `<tr class="click" data-href="#/quotes/${x.id}">
+        <td class="nowrap">${esc(x.quote_no)}</td><td class="nowrap">${thDate(x.issue_date)}</td><td>${esc(x.customer_name)}</td>
+        <td>${esc(x.job_no)} ${esc(x.job_title)}</td><td>${quoteBadge(x.status)}</td><td class="right">${baht(x.total)}</td>
+        <td class="nowrap">${thDate(x.valid_until)}</td></tr>`).join('')}
+    </table>` : '<p class="muted">ยังไม่มีใบเสนอราคา</p>'}</div>`);
+  main.querySelector('#search').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const f = formData(e.target);
+    location.hash = `#/quotes?q=${encodeURIComponent(f.q)}&status=${f.status}`;
+  });
+}
+
+function quoteItemRow(it = {}) {
+  return `<tr class="qitem">
+    <td class="qi-no"></td>
+    <td><textarea name="description" rows="2" placeholder="รายละเอียดสินค้า / บริการ">${esc(it.description)}</textarea></td>
+    <td><input name="quantity" type="number" min="0.01" step="any" value="${it.quantity ?? 1}"></td>
+    <td><input name="unit" value="${esc(it.unit ?? 'ชิ้น')}"></td>
+    <td><input name="unit_price" type="number" min="0" step="any" value="${it.unit_price ?? ''}"></td>
+    <td class="right qi-amount"></td>
+    <td><button type="button" class="icon-btn qi-del" title="ลบรายการ">✕</button></td>
+  </tr>`;
+}
+
+async function viewQuote(id, seq) {
+  const q = await api('GET', `/quotations/${id}`);
+  const locked = q.status === 'accepted';
+  const dis = locked ? 'disabled' : '';
+  const main = shell(seq, 'quotes', `
+    <div class="page-head">
+      <h1><a href="#/quotes" class="muted">ใบเสนอราคา</a> / ${esc(q.quote_no)} ${quoteBadge(q.status)}</h1>
+      <div class="toolbar" style="margin:0">
+        <a class="btn" href="#/jobs/${q.job_id}">งาน ${esc(q.job_no)}</a>
+        <a class="btn primary" href="#/quotes/${q.id}/print">🖨 พิมพ์ / PDF</a>
+      </div>
+    </div>
+    ${locked ? '<div class="card" style="background:#f0fdf4;border-color:#bbf7d0">✓ ลูกค้าอนุมัติใบเสนอราคานี้แล้ว — แก้ไขไม่ได้ ถ้าต้องการปรับให้กด "สร้างฉบับแก้ไข"</div>' : ''}
+    <form id="quote-form">
+      <div class="card"><div class="form">
+        <div><label>วันที่</label><input name="issue_date" type="date" value="${esc(q.issue_date)}" ${dis}></div>
+        <div><label>ยืนราคาถึง</label><input name="valid_until" type="date" value="${esc(q.valid_until || '')}" ${dis}></div>
+        <div class="full"><label>ลูกค้า *</label><input name="customer_name" required value="${esc(q.customer_name)}" ${dis}></div>
+        <div><label>เบอร์โทร</label><input name="customer_phone" value="${esc(q.customer_phone)}" ${dis}></div>
+        <div><label>เลขผู้เสียภาษี</label><input name="customer_tax_id" value="${esc(q.customer_tax_id)}" ${dis}></div>
+        <div class="full"><label>ที่อยู่</label><textarea name="customer_address" rows="2" ${dis}>${esc(q.customer_address)}</textarea></div>
+      </div></div>
+      <div class="card table-wrap">
+        <h2>รายการ</h2>
+        <table class="qitems"><thead><tr><th style="width:36px">#</th><th>รายการ</th><th style="width:90px">จำนวน</th><th style="width:90px">หน่วย</th>
+          <th style="width:120px">ราคา/หน่วย</th><th style="width:120px" class="right">จำนวนเงิน</th><th style="width:36px"></th></tr></thead>
+          <tbody>${q.items.map(quoteItemRow).join('')}</tbody></table>
+        ${locked ? '' : '<button type="button" class="btn" id="add-item" style="margin-top:10px">+ เพิ่มรายการ</button>'}
+      </div>
+      <div class="grid two">
+        <div class="card"><label>หมายเหตุ / เงื่อนไข</label><textarea name="notes" rows="6" ${dis} placeholder="เช่น มัดจำ 50% ก่อนผลิต, ราคานี้รวมค่าติดตั้ง">${esc(q.notes)}</textarea></div>
+        <div class="card qsum">
+          <div class="money-row"><span>รวมเป็นเงิน</span><span id="s-sub"></span></div>
+          <div class="money-row"><span>ส่วนลด</span><input name="discount" type="number" min="0" step="any" value="${q.discount || 0}" ${dis} style="width:140px;text-align:right"></div>
+          <div class="money-row"><span>ยอดหลังหักส่วนลด</span><span id="s-after"></span></div>
+          <div class="money-row"><label class="check" style="display:flex;gap:6px;align-items:center;margin:0;color:var(--text);font-size:15px">
+            <input type="checkbox" name="vat" ${Number(q.vat_rate) ? 'checked' : ''} ${dis} style="width:auto"> ภาษีมูลค่าเพิ่ม 7%</label><span id="s-vat"></span></div>
+          <div class="money-row total"><span>ยอดรวมสุทธิ</span><span id="s-total"></span></div>
+          <div class="muted" id="s-text" style="text-align:right;margin-top:4px"></div>
+        </div>
+      </div>
+      <div class="card"><div class="toolbar" style="margin:0">
+        ${locked ? '' : '<button class="btn primary" type="submit">💾 บันทึก</button>'}
+        <select id="q-status">${options(state.meta.QUOTE_STATUSES, q.status)}</select>
+        <button type="button" class="btn" id="q-status-btn">เปลี่ยนสถานะ</button>
+        <button type="button" class="btn" id="q-dup">สร้างฉบับแก้ไข</button>
+        <span style="flex:1"></span>
+        ${isAdmin() ? '<button type="button" class="btn danger" id="q-del">ลบ</button>' : ''}
+      </div></div>
+    </form>`);
+
+  const form = main.querySelector('#quote-form');
+  const tbody = form.querySelector('.qitems tbody');
+  if (locked) tbody.querySelectorAll('input,textarea,button').forEach((el) => (el.disabled = true));
+  const recalc = () => {
+    let sub = 0;
+    tbody.querySelectorAll('.qitem').forEach((tr, i) => {
+      const amount = Math.round(Number(tr.querySelector('[name=quantity]').value || 0) * Number(tr.querySelector('[name=unit_price]').value || 0) * 100) / 100;
+      tr.querySelector('.qi-no').textContent = i + 1;
+      tr.querySelector('.qi-amount').textContent = money(amount);
+      sub += amount;
+    });
+    const discount = Number(form.discount.value || 0);
+    const after = sub - discount;
+    const vat = form.vat.checked ? Math.round(after * 7) / 100 : 0;
+    const total = after + vat;
+    main.querySelector('#s-sub').textContent = money(sub);
+    main.querySelector('#s-after').textContent = money(after);
+    main.querySelector('#s-vat').textContent = money(vat);
+    main.querySelector('#s-total').textContent = money(total);
+    main.querySelector('#s-text').textContent = `(${bahtText(total)})`;
+  };
+  form.addEventListener('input', recalc);
+  tbody.addEventListener('click', (e) => {
+    if (!e.target.closest('.qi-del')) return;
+    if (tbody.querySelectorAll('.qitem').length === 1) return toast('ต้องมีอย่างน้อย 1 รายการ', true);
+    e.target.closest('tr').remove();
+    recalc();
+  });
+  main.querySelector('#add-item')?.addEventListener('click', () => {
+    tbody.insertAdjacentHTML('beforeend', quoteItemRow());
+    tbody.lastElementChild.querySelector('textarea').focus();
+    recalc();
+  });
+  recalc();
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = formData(form);
+    const items = [...tbody.querySelectorAll('.qitem')].map((tr) => ({
+      description: tr.querySelector('[name=description]').value,
+      quantity: tr.querySelector('[name=quantity]').value,
+      unit: tr.querySelector('[name=unit]').value,
+      unit_price: tr.querySelector('[name=unit_price]').value,
+    }));
+    try {
+      await api('PUT', `/quotations/${q.id}`, {
+        issue_date: f.issue_date, valid_until: f.valid_until, customer_name: f.customer_name, customer_phone: f.customer_phone,
+        customer_tax_id: f.customer_tax_id, customer_address: f.customer_address, notes: f.notes,
+        discount: f.discount, vat_rate: f.vat ? 7 : 0, items,
+      });
+      toast('บันทึกใบเสนอราคาแล้ว');
+      route();
+    } catch (ex) {
+      toast(ex.message, true);
+    }
+  });
+  main.querySelector('#q-status-btn').addEventListener('click', async () => {
+    const status = main.querySelector('#q-status').value;
+    if (status === q.status) return toast('ใบเสนอราคาอยู่ในสถานะนี้แล้ว', true);
+    const body = { status };
+    if (status === 'accepted') {
+      if (!confirm(`ยืนยันว่าลูกค้าอนุมัติใบเสนอราคา ${q.quote_no}?\n(หลังอนุมัติจะแก้ไขใบนี้ไม่ได้)`)) return;
+      body.apply_to_job = confirm(`อัปเดตราคางาน ${q.job_no} เป็น ${baht(q.total)} ตามใบเสนอราคานี้ด้วยไหม?`);
+    }
+    try {
+      await api('POST', `/quotations/${q.id}/status`, body);
+      toast(body.apply_to_job ? 'อนุมัติแล้ว และอัปเดตราคางานแล้ว' : 'เปลี่ยนสถานะแล้ว');
+      route();
+    } catch (ex) {
+      toast(ex.message, true);
+    }
+  });
+  main.querySelector('#q-dup').addEventListener('click', async () => {
+    try {
+      const d = await api('POST', `/quotations/${q.id}/duplicate`);
+      toast(`สร้างฉบับแก้ไข ${d.quote_no} แล้ว`);
+      location.hash = `#/quotes/${d.id}`;
+    } catch (ex) {
+      toast(ex.message, true);
+    }
+  });
+  main.querySelector('#q-del')?.addEventListener('click', async () => {
+    if (!confirm(`ลบใบเสนอราคา ${q.quote_no}?`)) return;
+    await api('DELETE', `/quotations/${q.id}`).catch((ex) => toast(ex.message, true));
+    toast('ลบใบเสนอราคาแล้ว');
+    location.hash = `#/jobs/${q.job_id}`;
+  });
+}
+
+// หน้าเอกสารสำหรับพิมพ์ / บันทึก PDF (ขนาด A4)
+async function viewQuotePrint(id, seq) {
+  const q = await api('GET', `/quotations/${id}`);
+  if (seq !== routeSeq) return;
+  const s = q.shop;
+  const after = q.subtotal - q.discount;
+  document.title = `${q.quote_no} — ใบเสนอราคา`;
+  $app.innerHTML = `
+    <div class="print-bar no-print">
+      <a class="btn" href="#/quotes/${q.id}">← กลับไปแก้ไข</a>
+      <span class="muted">เลือก "บันทึกเป็น PDF" ในหน้าต่างพิมพ์ เพื่อได้ไฟล์ PDF</span>
+      <button class="btn primary" id="do-print">🖨 พิมพ์ / บันทึก PDF</button>
+    </div>
+    <div class="doc">
+      <div class="doc-head">
+        <div class="doc-shop">
+          <div class="doc-shop-name">${esc(s.name)}</div>
+          ${s.address ? `<div>${esc(s.address)}</div>` : ''}
+          ${s.phone || s.email ? `<div>${[s.phone && `โทร ${esc(s.phone)}`, s.email && esc(s.email)].filter(Boolean).join(' · ')}</div>` : ''}
+          ${s.tax_id ? `<div>เลขประจำตัวผู้เสียภาษี ${esc(s.tax_id)}</div>` : ''}
+        </div>
+        <div class="doc-title">
+          <div class="doc-title-th">ใบเสนอราคา</div><div class="doc-title-en">QUOTATION</div>
+          <table class="doc-meta">
+            <tr><th>เลขที่</th><td>${esc(q.quote_no)}</td></tr>
+            <tr><th>วันที่</th><td>${thDateLong(q.issue_date)}</td></tr>
+            ${q.valid_until ? `<tr><th>ยืนราคาถึง</th><td>${thDateLong(q.valid_until)}</td></tr>` : ''}
+            <tr><th>อ้างอิงงาน</th><td>${esc(q.job_no)}</td></tr>
+          </table>
+        </div>
+      </div>
+      <div class="doc-cust">
+        <div class="doc-label">เรียน / ลูกค้า</div>
+        <div class="doc-cust-name">${esc(q.customer_name)}</div>
+        ${q.customer_address ? `<div class="pre">${esc(q.customer_address)}</div>` : ''}
+        ${q.customer_tax_id ? `<div>เลขประจำตัวผู้เสียภาษี ${esc(q.customer_tax_id)}</div>` : ''}
+        ${q.customer_phone ? `<div>โทร ${esc(q.customer_phone)}</div>` : ''}
+      </div>
+      <table class="doc-items">
+        <thead><tr><th style="width:7%">ลำดับ</th><th>รายการ</th><th style="width:10%">จำนวน</th><th style="width:9%">หน่วย</th><th style="width:15%">ราคา/หน่วย</th><th style="width:16%">จำนวนเงิน</th></tr></thead>
+        <tbody>${q.items.map((it, i) => `<tr><td class="c">${i + 1}</td><td class="pre">${esc(it.description)}</td>
+          <td class="r">${Number(it.quantity).toLocaleString('th-TH')}</td><td class="c">${esc(it.unit || '')}</td>
+          <td class="r">${money(it.unit_price)}</td><td class="r">${money(it.amount)}</td></tr>`).join('')}</tbody>
+      </table>
+      <div class="doc-sum">
+        <div class="doc-sum-left">
+          <div class="doc-baht">(${esc(bahtText(q.total))})</div>
+          ${q.notes ? `<div class="doc-label">หมายเหตุ / เงื่อนไข</div><div class="pre">${esc(q.notes)}</div>` : ''}
+        </div>
+        <table class="doc-totals">
+          <tr><th>รวมเป็นเงิน</th><td>${money(q.subtotal)}</td></tr>
+          ${Number(q.discount) ? `<tr><th>ส่วนลด</th><td>-${money(q.discount)}</td></tr><tr><th>ยอดหลังหักส่วนลด</th><td>${money(after)}</td></tr>` : ''}
+          ${Number(q.vat_rate) ? `<tr><th>ภาษีมูลค่าเพิ่ม ${Number(q.vat_rate)}%</th><td>${money(q.vat_amount)}</td></tr>` : ''}
+          <tr class="grand"><th>ยอดรวมสุทธิ</th><td>${money(q.total)}</td></tr>
+        </table>
+      </div>
+      <div class="doc-sign">
+        <div><div class="sign-line"></div><div>ผู้เสนอราคา</div><div class="muted">${esc(s.name)}</div><div class="muted">วันที่ ......../......../........</div></div>
+        <div><div class="sign-line"></div><div>ผู้อนุมัติสั่งซื้อ / ลูกค้า</div><div class="muted">&nbsp;</div><div class="muted">วันที่ ......../......../........</div></div>
+      </div>
+    </div>`;
+  $app.querySelector('#do-print').addEventListener('click', () => window.print());
 }
 
 // ---------- reports ----------
@@ -795,6 +1059,10 @@ async function viewSettings(seq) {
           <div><label>อีเมล</label><input name="email" type="email" value="${esc(t.email)}" ${admin ? '' : 'disabled'}></div>
           <div class="full"><label>เลขผู้เสียภาษี</label><input name="tax_id" value="${esc(t.tax_id)}" ${admin ? '' : 'disabled'}></div>
           <div class="full"><label>ที่อยู่</label><textarea name="address" ${admin ? '' : 'disabled'}>${esc(t.address)}</textarea></div>
+          <div class="full" style="margin-top:6px"><b>ค่าเริ่มต้นใบเสนอราคา</b></div>
+          <div><label>ยืนราคา (วัน)</label><input name="quote_validity_days" type="number" min="0" max="365" value="${t.quote_validity_days ?? 30}" ${admin ? '' : 'disabled'}></div>
+          <div class="check" style="align-self:end"><input type="checkbox" name="quote_vat" id="qv" ${t.quote_vat !== false ? 'checked' : ''} ${admin ? '' : 'disabled'}><label for="qv" style="margin:0">คิด VAT 7%</label></div>
+          <div class="full"><label>หมายเหตุ / เงื่อนไขในใบเสนอราคา</label><textarea name="quote_terms" rows="3" placeholder="เช่น มัดจำ 50% ก่อนผลิต ส่วนที่เหลือชำระเมื่อติดตั้งเสร็จ" ${admin ? '' : 'disabled'}>${esc(t.quote_terms)}</textarea></div>
           ${admin ? '<div class="full form-actions"><button class="btn primary">บันทึก</button></div>' : ''}
         </form>
       </div>
@@ -986,6 +1254,7 @@ async function route() {
   const params = new URLSearchParams(query);
   const parts = path.split('/').filter(Boolean);
   const seq = ++routeSeq;
+  document.title = 'MYD Easy — ระบบจัดการงานร้านป้าย';
   if (!state.token) return renderAuth(parts[0] === 'register' ? 'register' : 'login');
   try {
     if (!state.me) await loadSession();
@@ -994,6 +1263,9 @@ async function route() {
         return parts[1] ? await viewJob(parts[1], seq) : await viewJobs(params, seq);
       case 'customers':
         return parts[1] ? await viewCustomer(parts[1], seq) : await viewCustomers(params, seq);
+      case 'quotes':
+        if (parts[1] && parts[2] === 'print') return await viewQuotePrint(parts[1], seq);
+        return parts[1] ? await viewQuote(parts[1], seq) : await viewQuotes(params, seq);
       case 'reports':
         return await viewReports(params, seq);
       case 'settings':

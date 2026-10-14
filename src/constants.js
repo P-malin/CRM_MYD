@@ -72,6 +72,13 @@ const PAYMENT_METHODS = [
   { key: 'card', label: 'บัตร' },
 ];
 
+const QUOTE_STATUSES = [
+  { key: 'draft', label: 'ร่าง', color: '#64748b' },
+  { key: 'sent', label: 'ส่งลูกค้าแล้ว', color: '#3b82f6' },
+  { key: 'accepted', label: 'ลูกค้าอนุมัติ', color: '#16a34a' },
+  { key: 'rejected', label: 'ไม่อนุมัติ', color: '#dc2626' },
+];
+
 const ROLES = [
   { key: 'owner', label: 'เจ้าของร้าน' },
   { key: 'admin', label: 'ผู้ดูแล' },
@@ -87,5 +94,6 @@ module.exports = {
   DELIVERY_METHODS,
   PAYMENT_KINDS,
   PAYMENT_METHODS,
+  QUOTE_STATUSES,
   ROLES,
 };

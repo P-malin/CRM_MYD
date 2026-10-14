@@ -362,3 +362,108 @@ test('master สถานะงาน', async () => {
   assert.equal((await call('POST', '/job-statuses', { token: staff, body: { name: 'x' } })).status, 403);
   assert.equal((await call('GET', '/job-statuses', { token: staff })).status, 200);
 });
+
+test('ใบเสนอราคา', async () => {
+  const token = await register('ร้านใบเสนอราคา', 'quote@shop.test');
+  const other = await register('ร้านอื่น', 'quote-other@shop.test');
+  await call('PUT', '/tenant', {
+    token,
+    body: { name: 'ร้านใบเสนอราคา', tax_id: '0105555555555', quote_terms: 'มัดจำ 50% ก่อนผลิต', quote_validity_days: 15, quote_vat: true },
+  });
+  const c = (await call('POST', '/customers', { token, body: { name: 'คุณสมชาย', company: 'บจก. สุขใจ', address: '1 ถ.สีลม', tax_id: '0100000000001' } })).data;
+  const typeId = (await call('GET', '/job-types', { token })).data[0].id;
+  const job = (await call('POST', '/jobs', {
+    token,
+    body: { customer_id: c.id, title: 'ป้ายหน้าร้าน', job_type_id: typeId, delivery_method: 'customer_pickup', quantity: 2, price: 10000, width_cm: 200, height_cm: 50 },
+  })).data;
+
+  // สร้างจากงาน: เติมลูกค้า/รายการ/ค่าเริ่มต้นของร้านให้
+  const q1 = await call('POST', '/quotations', { token, body: { job_id: job.id } });
+  assert.equal(q1.status, 201);
+  const q = q1.data;
+  assert.match(q.quote_no, /^QT\d{4}-0001$/);
+  assert.equal(q.status, 'draft');
+  assert.equal(q.customer_name, 'บจก. สุขใจ (คุณสมชาย)');
+  assert.equal(q.customer_tax_id, '0100000000001');
+  assert.equal(q.notes, 'มัดจำ 50% ก่อนผลิต');
+  assert.equal(q.vat_rate, 7);
+  assert.equal(q.items.length, 1);
+  assert.ok(q.items[0].description.includes('ป้ายหน้าร้าน') && q.items[0].description.includes('200×50'));
+  assert.equal(q.items[0].quantity, 2);
+  assert.equal(q.items[0].unit_price, 5000);
+  assert.equal(q.subtotal, 10000);
+  assert.equal(q.vat_amount, 700);
+  assert.equal(q.total, 10700);
+  const days = (Date.parse(q.valid_until) - Date.parse(q.issue_date)) / 86400000;
+  assert.equal(days, 15);
+
+  // แก้ไขรายการ: ยอดคำนวณที่ server (ไม่เชื่อยอดจากหน้าเว็บ)
+  const upd = await call('PUT', `/quotations/${q.id}`, {
+    token,
+    body: {
+      items: [
+        { description: 'ตัวอักษรอะคริลิก', quantity: 3, unit: 'ตัว', unit_price: 1500.5, amount: 1 },
+        { description: 'ค่าติดตั้ง', quantity: 1, unit: 'งาน', unit_price: 2000 },
+      ],
+      discount: 501.5,
+      vat_rate: 7,
+      total: 1,
+    },
+  });
+  assert.equal(upd.status, 200);
+  assert.equal(upd.data.items[0].amount, 4501.5);
+  assert.equal(upd.data.subtotal, 6501.5);
+  assert.equal(upd.data.vat_amount, 420); // (6501.5 - 501.5) * 7%
+  assert.equal(upd.data.total, 6420);
+
+  // ตรวจข้อมูลผิด
+  const put = (body) => call('PUT', `/quotations/${q.id}`, { token, body });
+  assert.equal((await put({ items: [] })).status, 400);
+  assert.equal((await put({ items: [{ description: '', unit_price: 1 }] })).status, 400);
+  assert.equal((await put({ items: [{ description: 'x', quantity: 0 }] })).status, 400);
+  assert.equal((await put({ items: [{ description: 'x', unit_price: -1 }] })).status, 400);
+  assert.equal((await put({ discount: 999999 })).status, 400);
+  assert.equal((await put({ vat_rate: 10 })).status, 400);
+  assert.equal((await put({ valid_until: '2000-01-01' })).status, 400);
+  assert.equal((await put({ items: Array(51).fill({ description: 'x' }) })).status, 400);
+
+  // ไม่มี VAT
+  const noVat = (await put({ vat_rate: 0, discount: 0 })).data;
+  assert.equal(noVat.vat_amount, 0);
+  assert.equal(noVat.total, 6501.5);
+
+  // อนุมัติ + อัปเดตราคางาน → แก้ไขไม่ได้อีก
+  const acc = await call('POST', `/quotations/${q.id}/status`, { token, body: { status: 'accepted', apply_to_job: true } });
+  assert.equal(acc.data.status, 'accepted');
+  assert.ok(acc.data.accepted_at);
+  assert.equal((await call('GET', `/jobs/${job.id}`, { token })).data.price, 6501.5);
+  assert.equal((await put({ notes: 'x' })).status, 400);
+
+  // ฉบับแก้ไข: เลขใหม่ สถานะร่าง รายการเหมือนเดิม
+  const dup = (await call('POST', `/quotations/${q.id}/duplicate`, { token })).data;
+  assert.match(dup.quote_no, /-0002$/);
+  assert.equal(dup.status, 'draft');
+  assert.equal(dup.items.length, 2);
+  assert.equal(dup.total, 6501.5);
+
+  // รายการ + ค้นหา + ข้อมูลร้านสำหรับหัวเอกสาร
+  assert.equal((await call('GET', '/quotations', { token })).data.total, 2);
+  assert.equal((await call('GET', `/quotations?job_id=${job.id}&status=accepted`, { token })).data.total, 1);
+  assert.equal((await call('GET', '/quotations?q=สุขใจ', { token })).data.total, 2);
+  assert.equal((await call('GET', `/quotations/${q.id}`, { token })).data.shop.tax_id, '0105555555555');
+
+  // ร้านอื่นเข้าถึงไม่ได้ / อ้างงานร้านอื่นไม่ได้
+  assert.equal((await call('GET', `/quotations/${q.id}`, { token: other })).status, 404);
+  assert.equal((await call('PUT', `/quotations/${dup.id}`, { token: other, body: { notes: 'x' } })).status, 404);
+  assert.equal((await call('POST', '/quotations', { token: other, body: { job_id: job.id } })).status, 400);
+  assert.equal((await call('GET', '/quotations', { token: other })).data.total, 0);
+
+  // พนักงานลบไม่ได้, เจ้าของลบได้; ลบงาน → ใบเสนอราคาของงานหายด้วย
+  await call('POST', '/users', { token, body: { name: 'พนักงาน', email: 'quote-staff@shop.test', password: 'password123' } });
+  const staff = (await call('POST', '/auth/login', { body: { email: 'quote-staff@shop.test', password: 'password123' } })).data.token;
+  assert.equal((await call('DELETE', `/quotations/${dup.id}`, { token: staff })).status, 403);
+  assert.equal((await call('POST', '/quotations', { token: staff, body: { job_id: job.id } })).status, 201);
+  assert.equal((await call('DELETE', `/quotations/${dup.id}`, { token })).status, 200);
+  await call('DELETE', `/jobs/${job.id}`, { token });
+  assert.equal((await call('GET', '/quotations', { token })).data.total, 0);
+});

@@ -151,6 +151,10 @@ module.exports = function jobRoutes(db) {
        WHERE p.job_id = ? AND p.tenant_id = ? ORDER BY p.paid_at, p.id`,
       [job.id, t],
     );
+    job.quotations = await db.query(
+      'SELECT id, quote_no, status, issue_date, total FROM quotations WHERE job_id = ? AND tenant_id = ? ORDER BY id DESC',
+      [job.id, t],
+    );
     job.notifications = await db.query(
       `SELECT id, channel, status, error, created_at FROM notification_logs
        WHERE job_id = ? AND tenant_id = ? ORDER BY id DESC LIMIT 20`,

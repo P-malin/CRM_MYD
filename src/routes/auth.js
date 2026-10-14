@@ -1,10 +1,10 @@
 const express = require('express');
 const { hashPassword, verifyPassword, createSession, destroySession, requireAuth, requireRole } = require('../auth');
-const { HttpError, str, requireStr } = require('../util');
+const { HttpError, str, requireStr, num } = require('../util');
 const { DEFAULT_JOB_TYPES_VALUES, DEFAULT_JOB_STATUSES_VALUES } = require('../schema');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const TENANT_COLS = 'id, name, phone, email, address, tax_id';
+const TENANT_COLS = 'id, name, phone, email, address, tax_id, quote_terms, quote_validity_days, quote_vat';
 
 function validateCredentials(email, password) {
   if (!EMAIL_RE.test(email)) throw new HttpError(400, 'อีเมลไม่ถูกต้อง');
@@ -78,8 +78,13 @@ module.exports = function authRoutes(db) {
   r.put('/tenant', auth, requireRole('owner', 'admin'), async (req, res) => {
     const b = req.body;
     const tenant = await db.one(
-      `UPDATE tenants SET name = ?, phone = ?, email = ?, address = ?, tax_id = ? WHERE id = ? RETURNING ${TENANT_COLS}`,
-      [requireStr(b.name, 'ชื่อร้าน'), str(b.phone), str(b.email), str(b.address), str(b.tax_id), req.user.tenant_id],
+      `UPDATE tenants SET name = ?, phone = ?, email = ?, address = ?, tax_id = ?, quote_terms = ?, quote_validity_days = ?, quote_vat = ?
+       WHERE id = ? RETURNING ${TENANT_COLS}`,
+      [
+        requireStr(b.name, 'ชื่อร้าน'), str(b.phone), str(b.email), str(b.address), str(b.tax_id), str(b.quote_terms),
+        Math.min(Math.round(num(b.quote_validity_days, 'จำนวนวันยืนราคา', { min: 0, def: 30 })), 365), b.quote_vat === undefined ? true : Boolean(b.quote_vat),
+        req.user.tenant_id,
+      ],
     );
     res.json(tenant);
   });
