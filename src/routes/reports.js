@@ -1,8 +1,10 @@
 const express = require('express');
 const { HttpError, date, today } = require('../util');
-const { JOB_STATUSES, OPEN_STATUSES, DELIVERY_METHODS } = require('../constants');
+const { ACTIVE_KINDS, DELIVERY_METHODS } = require('../constants');
 
-const OPEN_IN = OPEN_STATUSES.map((s) => `'${s}'`).join(',');
+const ACTIVE_IN = ACTIVE_KINDS.map((k) => `'${k}'`).join(',');
+// งานพร้อมประเภทสถานะ (st.kind): open / delivered / done / cancelled
+const JOBS = 'jobs j JOIN job_statuses st ON st.id = j.status_id';
 
 function addDays(isoDate, days) {
   const d = new Date(`${isoDate}T00:00:00Z`);
@@ -36,36 +38,43 @@ module.exports = function reportRoutes(db) {
     const t = req.user.tenant_id;
     const d = today();
     const monthStart = `${d.slice(0, 8)}01`;
-    const counts = Object.fromEntries(JOB_STATUSES.map((s) => [s.key, 0]));
-    for (const row of await db.query('SELECT status, COUNT(*) n FROM jobs WHERE tenant_id = ? GROUP BY status', [t])) counts[row.status] = row.n;
 
-    const jobs = await db.one(
-      `SELECT
-         COUNT(*) FILTER (WHERE status IN (${OPEN_IN})) AS open_jobs,
-         COUNT(*) FILTER (WHERE status IN (${OPEN_IN}) AND due_date < ?) AS overdue,
-         COUNT(*) FILTER (WHERE status IN (${OPEN_IN}) AND due_date BETWEEN ? AND ?) AS due_7_days,
-         COALESCE(SUM(price) FILTER (WHERE status != 'cancelled' AND ${LOCAL_DATE('created_at')} >= ?), 0) AS month_sales
-       FROM jobs WHERE tenant_id = ?`,
-      [d, d, addDays(d, 7), monthStart, t],
-    );
-    const [collected, outstanding, customers, upcoming] = await Promise.all([
+    const [statusCounts, jobs, collected, outstanding, customers, upcoming] = await Promise.all([
+      // ทุกสถานะที่เปิดใช้งาน + สถานะที่ปิดแล้วแต่ยังมีงานอยู่
+      db.query(
+        `SELECT s.id, s.name, s.color, s.kind, COUNT(j.id) AS n
+         FROM job_statuses s LEFT JOIN jobs j ON j.status_id = s.id
+         WHERE s.tenant_id = ? GROUP BY s.id HAVING s.active OR COUNT(j.id) > 0
+         ORDER BY s.sort_order, s.id`,
+        [t],
+      ),
+      db.one(
+        `SELECT
+           COUNT(*) FILTER (WHERE st.kind IN (${ACTIVE_IN})) AS open_jobs,
+           COUNT(*) FILTER (WHERE st.kind = 'open' AND j.due_date < ?) AS overdue,
+           COUNT(*) FILTER (WHERE st.kind = 'open' AND j.due_date BETWEEN ? AND ?) AS due_7_days,
+           COALESCE(SUM(j.price) FILTER (WHERE st.kind != 'cancelled' AND ${LOCAL_DATE('j.created_at')} >= ?), 0) AS month_sales
+         FROM ${JOBS} WHERE j.tenant_id = ?`,
+        [d, d, addDays(d, 7), monthStart, t],
+      ),
       db.one('SELECT COALESCE(SUM(amount), 0) v FROM payments WHERE tenant_id = ? AND paid_at >= ?', [t, monthStart]),
       db.one(
         `SELECT COALESCE(SUM(j.price - (SELECT COALESCE(SUM(amount), 0) FROM payments p WHERE p.job_id = j.id)), 0) v
-         FROM jobs j WHERE j.tenant_id = ? AND j.status != 'cancelled'`,
+         FROM ${JOBS} WHERE j.tenant_id = ? AND st.kind != 'cancelled'`,
         [t],
       ),
       db.one('SELECT COUNT(*) n FROM customers WHERE tenant_id = ?', [t]),
       db.query(
-        `SELECT j.id, j.job_no, j.title, j.status, j.due_date, j.priority, c.name AS customer_name
-         FROM jobs j JOIN customers c ON c.id = j.customer_id
-         WHERE j.tenant_id = ? AND j.status IN (${OPEN_IN}) AND j.due_date IS NOT NULL
+        `SELECT j.id, j.job_no, j.title, j.status_id, st.name AS status_name, st.color AS status_color,
+           j.due_date, j.priority, c.name AS customer_name
+         FROM ${JOBS} JOIN customers c ON c.id = j.customer_id
+         WHERE j.tenant_id = ? AND st.kind = 'open' AND j.due_date IS NOT NULL
          ORDER BY j.due_date LIMIT 10`,
         [t],
       ),
     ]);
     res.json({
-      status_counts: counts,
+      status_counts: statusCounts,
       ...jobs,
       month_collected: collected.v,
       outstanding: outstanding.v,
@@ -84,47 +93,52 @@ module.exports = function reportRoutes(db) {
     const [totals, collected, newCustomers, ontime, byStatus, bySignType, topCustomers, byStaff, salesByMonth, collectedByMonth] = await Promise.all([
       db.one(
         `SELECT COUNT(*) AS jobs,
-           COALESCE(SUM(price) FILTER (WHERE status != 'cancelled'), 0) AS sales,
-           COUNT(*) FILTER (WHERE status = 'completed') AS completed,
-           COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled
-         FROM jobs j WHERE tenant_id = ? AND ${created}`,
+           COALESCE(SUM(j.price) FILTER (WHERE st.kind != 'cancelled'), 0) AS sales,
+           COUNT(*) FILTER (WHERE st.kind = 'done') AS completed,
+           COUNT(*) FILTER (WHERE st.kind = 'cancelled') AS cancelled
+         FROM ${JOBS} WHERE j.tenant_id = ? AND ${created}`,
         p,
       ),
       db.one('SELECT COALESCE(SUM(amount), 0) v FROM payments WHERE tenant_id = ? AND paid_at BETWEEN ? AND ?', p),
       db.one(`SELECT COUNT(*) n FROM customers WHERE tenant_id = ? AND ${LOCAL_DATE('created_at')} BETWEEN ? AND ?`, p),
+      // ส่งตรงเวลา: วันที่ส่งมอบ (delivered_at) ไม่เกินกำหนดส่ง
       db.one(
-        `SELECT COUNT(*) n, COUNT(*) FILTER (WHERE due_date IS NULL OR ${LOCAL_DATE('completed_at')} <= due_date) ok
-         FROM jobs WHERE tenant_id = ? AND status = 'completed' AND ${LOCAL_DATE('completed_at')} BETWEEN ? AND ?`,
+        `SELECT COUNT(*) n, COUNT(*) FILTER (WHERE j.due_date IS NULL OR ${LOCAL_DATE('j.delivered_at')} <= j.due_date) ok
+         FROM ${JOBS} WHERE j.tenant_id = ? AND st.kind IN ('delivered', 'done') AND ${LOCAL_DATE('j.delivered_at')} BETWEEN ? AND ?`,
         p,
       ),
-      db.query(`SELECT status, COUNT(*) AS jobs, COALESCE(SUM(price), 0) AS value FROM jobs j WHERE tenant_id = ? AND ${created} GROUP BY status`, p),
       db.query(
-        `SELECT COALESCE(sign_type, 'ไม่ระบุ') AS sign_type, COUNT(*) AS jobs, COALESCE(SUM(price), 0) AS value
-         FROM jobs j WHERE tenant_id = ? AND status != 'cancelled' AND ${created}
+        `SELECT st.id AS status_id, st.name, st.color, COUNT(*) AS jobs, COALESCE(SUM(j.price), 0) AS value
+         FROM ${JOBS} WHERE j.tenant_id = ? AND ${created} GROUP BY st.id ORDER BY st.sort_order, st.id`,
+        p,
+      ),
+      db.query(
+        `SELECT COALESCE(j.sign_type, 'ไม่ระบุ') AS sign_type, COUNT(*) AS jobs, COALESCE(SUM(j.price), 0) AS value
+         FROM ${JOBS} WHERE j.tenant_id = ? AND st.kind != 'cancelled' AND ${created}
          GROUP BY 1 ORDER BY value DESC`,
         p,
       ),
       db.query(
         `SELECT c.id, c.name, c.company, COUNT(*) AS jobs, COALESCE(SUM(j.price), 0) AS value
-         FROM jobs j JOIN customers c ON c.id = j.customer_id
-         WHERE j.tenant_id = ? AND j.status != 'cancelled' AND ${created}
+         FROM ${JOBS} JOIN customers c ON c.id = j.customer_id
+         WHERE j.tenant_id = ? AND st.kind != 'cancelled' AND ${created}
          GROUP BY c.id ORDER BY value DESC LIMIT 10`,
         p,
       ),
       db.query(
         `SELECT COALESCE(u.name, 'ยังไม่มอบหมาย') AS name, COUNT(*) AS jobs,
-           COUNT(*) FILTER (WHERE j.status = 'completed') AS completed,
-           COUNT(*) FILTER (WHERE j.status IN (${OPEN_IN})) AS open,
-           COALESCE(SUM(j.price) FILTER (WHERE j.status != 'cancelled'), 0) AS value
-         FROM jobs j LEFT JOIN users u ON u.id = j.assigned_to
+           COUNT(*) FILTER (WHERE st.kind = 'done') AS completed,
+           COUNT(*) FILTER (WHERE st.kind IN (${ACTIVE_IN})) AS open,
+           COALESCE(SUM(j.price) FILTER (WHERE st.kind != 'cancelled'), 0) AS value
+         FROM ${JOBS} LEFT JOIN users u ON u.id = j.assigned_to
          WHERE j.tenant_id = ? AND ${created}
          GROUP BY j.assigned_to, u.name ORDER BY jobs DESC`,
         p,
       ),
       // ยอดรายเดือน (ยอดขายตามวันรับงาน, ยอดเก็บเงินตามวันชำระ)
       db.query(
-        `SELECT ${LOCAL_MONTH('j.created_at')} AS month, COUNT(*) AS jobs, COALESCE(SUM(price), 0) AS sales
-         FROM jobs j WHERE tenant_id = ? AND status != 'cancelled' AND ${created} GROUP BY 1`,
+        `SELECT ${LOCAL_MONTH('j.created_at')} AS month, COUNT(*) AS jobs, COALESCE(SUM(j.price), 0) AS sales
+         FROM ${JOBS} WHERE j.tenant_id = ? AND st.kind != 'cancelled' AND ${created} GROUP BY 1`,
         p,
       ),
       db.query(
@@ -163,14 +177,13 @@ module.exports = function reportRoutes(db) {
   r.get('/reports/jobs.csv', async (req, res) => {
     const t = req.user.tenant_id;
     const { from, to } = range(req.query);
-    const labels = Object.fromEntries(JOB_STATUSES.map((s) => [s.key, s.label]));
     const deliveryLabels = Object.fromEntries(DELIVERY_METHODS.map((m) => [m.key, m.label]));
     const rows = await db.query(
       `SELECT j.job_no, to_char(j.created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD') AS created, c.name AS customer, c.phone,
          j.title, j.sign_type, j.material, j.width_cm, j.height_cm, j.quantity, j.price,
          (SELECT COALESCE(SUM(amount), 0) FROM payments p WHERE p.job_id = j.id) AS paid,
-         j.status, j.due_date, u.name AS assigned, j.delivery_method, j.install_address, j.location_url
-       FROM jobs j JOIN customers c ON c.id = j.customer_id LEFT JOIN users u ON u.id = j.assigned_to
+         st.name AS status_name, j.due_date, u.name AS assigned, j.delivery_method, j.install_address, j.location_url
+       FROM ${JOBS} JOIN customers c ON c.id = j.customer_id LEFT JOIN users u ON u.id = j.assigned_to
        WHERE j.tenant_id = ? AND ${LOCAL_DATE('j.created_at')} BETWEEN ? AND ? ORDER BY j.id`,
       [t, from, to],
     );
@@ -179,7 +192,8 @@ module.exports = function reportRoutes(db) {
     for (const x of rows) {
       lines.push(
         [x.job_no, x.created, x.customer, x.phone, x.title, x.sign_type, x.material, x.width_cm, x.height_cm, x.quantity, x.price, x.paid,
-          x.price - x.paid, labels[x.status] || x.status, x.due_date, x.assigned, deliveryLabels[x.delivery_method] || '', x.install_address, x.location_url].map(csvCell).join(','),
+          x.price - x.paid, x.status_name, x.due_date, x.assigned, deliveryLabels[x.delivery_method] || '', x.install_address, x.location_url]
+          .map(csvCell).join(','),
       );
     }
     res.set('Content-Type', 'text/csv; charset=utf-8');

@@ -67,25 +67,31 @@ test('ขั้นตอนหลัก: ลูกค้า → รับงา�
   });
   assert.equal(job.status, 201);
   assert.match(job.data.job_no, /^J\d{4}-0001$/);
-  assert.equal(job.data.status, 'new');
+  const statuses = (await call('GET', '/job-statuses', { token })).data;
+  const S = Object.fromEntries(statuses.map((x) => [x.name, x]));
+  assert.equal(job.data.status_name, 'รับลูกค้าใหม่');
   assert.equal(job.data.paid, 2000);
   assert.equal(job.data.sign_type, 'อักษรอะคริลิก');
   assert.equal(job.data.delivery_method, 'shop_install');
   assert.equal(job.data.install_required, true);
 
-  const st = await call('POST', `/jobs/${job.data.id}/status`, { token, body: { status: 'producing', note: 'ลูกค้าอนุมัติแบบแล้ว' } });
-  assert.equal(st.data.status, 'producing');
+  const st = await call('POST', `/jobs/${job.data.id}/status`, { token, body: { status_id: S['กำลังผลิต'].id, note: 'ลูกค้าอนุมัติแบบแล้ว' } });
+  assert.equal(st.data.status_name, 'กำลังผลิต');
+  assert.equal(st.data.status_kind, 'open');
 
   const pay = await call('POST', `/jobs/${job.data.id}/payments`, { token, body: { amount: 3000, kind: 'final', method: 'transfer' } });
   assert.equal(pay.data.paid, 5000);
 
-  await call('POST', `/jobs/${job.data.id}/status`, { token, body: { status: 'completed' } });
+  await call('POST', `/jobs/${job.data.id}/status`, { token, body: { status_id: S['ปิดงาน'].id } });
   const detail = await call('GET', `/jobs/${job.data.id}`, { token });
   assert.equal(detail.data.logs.length, 3);
+  assert.deepEqual(detail.data.logs.map((l) => l.to_name), ['รับลูกค้าใหม่', 'กำลังผลิต', 'ปิดงาน']);
   assert.ok(detail.data.completed_at);
+  assert.ok(detail.data.delivered_at);
 
   const dash = await call('GET', '/reports/dashboard', { token });
-  assert.equal(dash.data.status_counts.completed, 1);
+  assert.equal(dash.data.status_counts.find((x) => x.name === 'ปิดงาน').n, 1);
+  assert.equal(dash.data.open_jobs, 0);
   assert.equal(dash.data.month_sales, 5000);
   assert.equal(dash.data.outstanding, 0);
 
@@ -108,7 +114,7 @@ test('ข้อมูลแต่ละร้านแยกจากกัน (
   assert.equal((await call('GET', '/customers', { token: t2 })).data.total, 0);
   assert.equal((await call('GET', `/customers/${c1.id}`, { token: t2 })).status, 404);
   assert.equal((await call('GET', `/jobs/${j1.id}`, { token: t2 })).status, 404);
-  assert.equal((await call('POST', `/jobs/${j1.id}/status`, { token: t2, body: { status: 'completed' } })).status, 404);
+  assert.equal((await call('POST', `/jobs/${j1.id}/status`, { token: t2, body: { status_id: 1 } })).status, 404);
   assert.equal((await call('PUT', `/customers/${c1.id}`, { token: t2, body: { name: 'แฮ็ก' } })).status, 404);
   // อ้าง customer_id ของร้านอื่นตอนสร้างงานไม่ได้
   const t2Type = (await call('GET', '/job-types', { token: t2 })).data[0].id;
@@ -266,4 +272,93 @@ test('ลิงก์ Google Maps ตำแหน่งหน้างาน', a
   const job = (await post('https://maps.app.goo.gl/AbC')).data;
   const cleared = await call('PUT', `/jobs/${job.id}`, { token, body: { location_url: '' } });
   assert.equal(cleared.data.location_url, null);
+});
+
+test('master สถานะงาน', async () => {
+  const owner = await register('ร้านสถานะ', 'status@shop.test');
+  const other = await register('ร้านสถานะอื่น', 'status-other@shop.test');
+  const list = (await call('GET', '/job-statuses', { token: owner })).data;
+  assert.deepEqual(list.map((x) => x.name), [
+    'รับลูกค้าใหม่', 'รอรายละเอียด', 'เสนอราคา', 'รออนุมัติ', 'ยืนยันงาน', 'รอมัดจำ', 'รอผลิต',
+    'กำลังผลิต', 'รอติดตั้ง/จัดส่ง', 'ติดตั้ง/จัดส่งแล้ว', 'รอชำระเงิน', 'ปิดงาน', 'ยกเลิก',
+  ]);
+  const S = Object.fromEntries(list.map((x) => [x.name, x]));
+  const otherFirst = (await call('GET', '/job-statuses', { token: other })).data[0];
+
+  const c = (await call('POST', '/customers', { token: owner, body: { name: 'ลูกค้า' } })).data;
+  const typeId = (await call('GET', '/job-types', { token: owner })).data[0].id;
+  const newJob = async (extra = {}) =>
+    (await call('POST', '/jobs', { token: owner, body: { customer_id: c.id, title: 'ป้าย', job_type_id: typeId, delivery_method: 'customer_pickup', price: 1000, ...extra } })).data;
+  const move = (id, statusId) => call('POST', `/jobs/${id}/status`, { token: owner, body: { status_id: statusId } });
+
+  // งานเลยกำหนด: นับเฉพาะงานที่ยังไม่ส่งมอบ
+  const late = await newJob({ due_date: '2020-01-01' });
+  assert.equal((await call('GET', '/reports/dashboard', { token: owner })).data.overdue, 1);
+  assert.equal((await move(late.id, S['ติดตั้ง/จัดส่งแล้ว'].id)).data.status_kind, 'delivered');
+  let dash = (await call('GET', '/reports/dashboard', { token: owner })).data;
+  assert.equal(dash.overdue, 0);
+  assert.equal(dash.open_jobs, 1); // ส่งมอบแล้วแต่ยังไม่ปิด ยังนับเป็นงานที่ดำเนินการอยู่
+  // เวลาส่งมอบคงเดิมเมื่อไป "รอชำระเงิน" → ปิดงาน; ย้อนกลับไปสถานะระหว่างทำจะล้าง
+  const delivered = (await call('GET', `/jobs/${late.id}`, { token: owner })).data.delivered_at;
+  await move(late.id, S['รอชำระเงิน'].id);
+  const closed = (await move(late.id, S['ปิดงาน'].id)).data;
+  assert.equal(closed.delivered_at, delivered);
+  assert.ok(closed.completed_at);
+  const reopened = (await move(late.id, S['กำลังผลิต'].id)).data;
+  assert.equal(reopened.delivered_at, null);
+  assert.equal(reopened.completed_at, null);
+
+  // งานยกเลิกไม่นับยอดขาย
+  const cancelled = await newJob({ price: 9999 });
+  await move(cancelled.id, S['ยกเลิก'].id);
+  dash = (await call('GET', '/reports/dashboard', { token: owner })).data;
+  assert.equal(dash.month_sales, 1000);
+
+  // ใช้สถานะของร้านอื่นไม่ได้ / ย้ายไปสถานะเดิมไม่ได้
+  assert.equal((await move(late.id, otherFirst.id)).status, 400);
+  assert.equal((await move(late.id, S['กำลังผลิต'].id)).status, 400);
+
+  // เพิ่ม / แก้ไข (สี, ประเภท) / ชื่อซ้ำ / สีไม่ถูกต้อง
+  const added = await call('POST', '/job-statuses', { token: owner, body: { name: 'รอตรวจงาน', color: '#123ABC', kind: 'open' } });
+  assert.equal(added.status, 201);
+  assert.equal(added.data.color, '#123abc');
+  assert.equal(added.data.sort_order, 14);
+  assert.equal((await call('POST', '/job-statuses', { token: owner, body: { name: 'รอตรวจงาน' } })).status, 409);
+  for (const bad of ['red', '#12345', 'url(x)', '#12345g"']) {
+    assert.equal((await call('POST', '/job-statuses', { token: owner, body: { name: `x${bad}`, color: bad } })).status, 400, bad);
+  }
+  assert.equal((await call('POST', '/job-statuses', { token: owner, body: { name: 'y', kind: 'weird' } })).status, 400);
+  // เปลี่ยนชื่อแล้วงานแสดงชื่อใหม่
+  await call('PUT', `/job-statuses/${S['กำลังผลิต'].id}`, { token: owner, body: { name: 'อยู่ระหว่างผลิต' } });
+  assert.equal((await call('GET', `/jobs/${late.id}`, { token: owner })).data.status_name, 'อยู่ระหว่างผลิต');
+
+  // เรียงลำดับ: สถานะแรกที่เป็น open = สถานะเริ่มต้นของงานใหม่
+  const ids = (await call('GET', '/job-statuses?all=1', { token: owner })).data.map((x) => x.id);
+  const reordered = [added.data.id, ...ids.filter((id) => id !== added.data.id)];
+  assert.equal((await call('PUT', '/job-statuses/order', { token: owner, body: { ids: reordered } })).status, 200);
+  assert.equal((await newJob()).status_name, 'รอตรวจงาน');
+  assert.equal((await call('PUT', '/job-statuses/order', { token: owner, body: { ids: reordered.slice(1) } })).status, 400);
+  assert.equal((await call('PUT', '/job-statuses/order', { token: owner, body: { ids: [...reordered.slice(1), otherFirst.id] } })).status, 400);
+
+  // ลบ: สถานะที่มีงาน/ประวัติ ลบไม่ได้; ปิดใช้งานแล้วเลือกไม่ได้
+  assert.equal((await call('DELETE', `/job-statuses/${S['ปิดงาน'].id}`, { token: owner })).status, 409);
+  const unused = (await call('POST', '/job-statuses', { token: owner, body: { name: 'ไม่ได้ใช้' } })).data;
+  assert.equal((await call('DELETE', `/job-statuses/${unused.id}`, { token: owner })).status, 200);
+  await call('PUT', `/job-statuses/${S['เสนอราคา'].id}`, { token: owner, body: { active: false } });
+  assert.equal((await move(late.id, S['เสนอราคา'].id)).status, 400);
+  assert.ok(!(await call('GET', '/job-statuses', { token: owner })).data.some((x) => x.id === S['เสนอราคา'].id));
+
+  // ต้องเหลือสถานะ open ที่เปิดใช้งานอย่างน้อย 1 อัน
+  const opens = (await call('GET', '/job-statuses', { token: owner })).data.filter((x) => x.kind === 'open');
+  for (const o of opens.slice(1)) await call('PUT', `/job-statuses/${o.id}`, { token: owner, body: { active: false } });
+  const last = await call('PUT', `/job-statuses/${opens[0].id}`, { token: owner, body: { active: false } });
+  assert.equal(last.status, 400);
+  assert.match(last.data.error, /อย่างน้อย 1/);
+
+  // ร้านอื่นแก้ไม่ได้ / พนักงานแก้ master ไม่ได้
+  assert.equal((await call('PUT', `/job-statuses/${otherFirst.id}`, { token: owner, body: { name: 'แฮ็ก' } })).status, 404);
+  await call('POST', '/users', { token: owner, body: { name: 'พนักงาน', email: 'status-staff@shop.test', password: 'password123' } });
+  const staff = (await call('POST', '/auth/login', { body: { email: 'status-staff@shop.test', password: 'password123' } })).data.token;
+  assert.equal((await call('POST', '/job-statuses', { token: staff, body: { name: 'x' } })).status, 403);
+  assert.equal((await call('GET', '/job-statuses', { token: staff })).status, 200);
 });

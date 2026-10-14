@@ -32,8 +32,10 @@ module.exports = function customerRoutes(db) {
     const { n: total } = await db.one(`SELECT COUNT(*) n FROM customers c WHERE ${where}`, params);
     const rows = await db.query(
       `SELECT c.*,
-         (SELECT COUNT(*) FROM jobs j WHERE j.customer_id = c.id AND j.status != 'cancelled') AS job_count,
-         (SELECT COALESCE(SUM(j.price), 0) FROM jobs j WHERE j.customer_id = c.id AND j.status != 'cancelled') AS total_value,
+         (SELECT COUNT(*) FROM jobs j JOIN job_statuses st ON st.id = j.status_id
+            WHERE j.customer_id = c.id AND st.kind != 'cancelled') AS job_count,
+         (SELECT COALESCE(SUM(j.price), 0) FROM jobs j JOIN job_statuses st ON st.id = j.status_id
+            WHERE j.customer_id = c.id AND st.kind != 'cancelled') AS total_value,
          (SELECT MAX(j.created_at) FROM jobs j WHERE j.customer_id = c.id) AS last_job_at
        FROM customers c WHERE ${where}
        ORDER BY c.name LIMIT ? OFFSET ?`,
@@ -45,9 +47,11 @@ module.exports = function customerRoutes(db) {
   r.get('/customers/:id', async (req, res) => {
     const c = await getCustomer(req.user.tenant_id, intId(req.params.id));
     c.jobs = await db.query(
-      `SELECT j.id, j.job_no, j.title, j.status, j.price, j.due_date, j.created_at,
+      `SELECT j.id, j.job_no, j.title, j.status_id, st.name AS status_name, st.color AS status_color, st.kind AS status_kind,
+         j.price, j.due_date, j.created_at,
          (SELECT COALESCE(SUM(amount), 0) FROM payments p WHERE p.job_id = j.id) AS paid
-       FROM jobs j WHERE j.customer_id = ? AND j.tenant_id = ? ORDER BY j.created_at DESC`,
+       FROM jobs j JOIN job_statuses st ON st.id = j.status_id
+       WHERE j.customer_id = ? AND j.tenant_id = ? ORDER BY j.created_at DESC`,
       [c.id, req.user.tenant_id],
     );
     res.json(c);

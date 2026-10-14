@@ -1,19 +1,21 @@
 const express = require('express');
 const { requireRole } = require('../auth');
 const { HttpError, str, requireStr, num, oneOf, date, mapsUrl, intId, today, pagination } = require('../util');
-const { STATUS_KEYS, OPEN_STATUSES, PRIORITIES, PAYMENT_KINDS, PAYMENT_METHODS, DELIVERY_METHODS } = require('../constants');
+const { ACTIVE_KINDS, PRIORITIES, PAYMENT_KINDS, PAYMENT_METHODS, DELIVERY_METHODS } = require('../constants');
 
 const PRIORITY_KEYS = PRIORITIES.map((p) => p.key);
 const METHOD_KEYS = PAYMENT_METHODS.map((m) => m.key);
 const DELIVERY_KEYS = DELIVERY_METHODS.map((m) => m.key);
-const OPEN_IN = OPEN_STATUSES.map((s) => `'${s}'`).join(',');
+const ACTIVE_IN = ACTIVE_KINDS.map((k) => `'${k}'`).join(',');
 
 const JOB_SELECT = `
   SELECT j.*, c.name AS customer_name, c.company AS customer_company, c.phone AS customer_phone,
     u.name AS assigned_name,
+    st.name AS status_name, st.color AS status_color, st.kind AS status_kind,
     (SELECT COALESCE(SUM(p.amount), 0) FROM payments p WHERE p.job_id = j.id) AS paid
   FROM jobs j
   JOIN customers c ON c.id = j.customer_id
+  JOIN job_statuses st ON st.id = j.status_id
   LEFT JOIN users u ON u.id = j.assigned_to`;
 
 module.exports = function jobRoutes(db) {
@@ -82,14 +84,15 @@ module.exports = function jobRoutes(db) {
     const { limit, offset } = pagination(req.query);
     const conds = ['j.tenant_id = ?'];
     const params = [req.user.tenant_id];
-    if (req.query.status) {
-      const statuses = String(req.query.status).split(',').filter((s) => STATUS_KEYS.includes(s));
-      if (statuses.length) {
-        conds.push(`j.status IN (${statuses.map(() => '?').join(',')})`);
-        params.push(...statuses);
+    if (req.query.status_id) {
+      const ids = String(req.query.status_id).split(',').map(Number).filter(Number.isInteger);
+      if (ids.length) {
+        conds.push(`j.status_id IN (${ids.map(() => '?').join(',')})`);
+        params.push(...ids);
       }
     }
-    if (req.query.open === '1') conds.push(`j.status IN (${OPEN_IN})`);
+    // open=1 : งานที่ยังไม่ปิด (ระหว่างดำเนินการ + ส่งมอบแล้วรอปิด)
+    if (req.query.open === '1') conds.push(`st.kind IN (${ACTIVE_IN})`);
     if (Number.isInteger(Number(req.query.customer_id)) && req.query.customer_id) {
       conds.push('j.customer_id = ?');
       params.push(Number(req.query.customer_id));
@@ -107,7 +110,7 @@ module.exports = function jobRoutes(db) {
       params.push(Number(req.query.assigned_to));
     }
     if (req.query.overdue === '1') {
-      conds.push(`j.status IN (${OPEN_IN}) AND j.due_date < ?`);
+      conds.push("st.kind = 'open' AND j.due_date < ?");
       params.push(today());
     }
     const q = str(req.query.q);
@@ -116,7 +119,10 @@ module.exports = function jobRoutes(db) {
       params.push(...Array(5).fill(`%${q}%`));
     }
     const where = conds.join(' AND ');
-    const { n: total } = await db.one(`SELECT COUNT(*) n FROM jobs j JOIN customers c ON c.id = j.customer_id WHERE ${where}`, params);
+    const { n: total } = await db.one(
+      `SELECT COUNT(*) n FROM jobs j JOIN customers c ON c.id = j.customer_id JOIN job_statuses st ON st.id = j.status_id WHERE ${where}`,
+      params,
+    );
     const rows = await db.query(`${JOB_SELECT} WHERE ${where} ORDER BY j.due_date NULLS LAST, j.id DESC LIMIT ? OFFSET ?`, [
       ...params,
       limit,
@@ -129,7 +135,13 @@ module.exports = function jobRoutes(db) {
     const t = req.user.tenant_id;
     const job = await getJob(t, intId(req.params.id));
     job.logs = await db.query(
-      `SELECT l.*, u.name AS user_name FROM job_status_logs l LEFT JOIN users u ON u.id = l.user_id
+      `SELECT l.id, l.note, l.created_at, u.name AS user_name,
+         l.from_status_id, fs.name AS from_name, fs.color AS from_color,
+         l.to_status_id, ts.name AS to_name, ts.color AS to_color
+       FROM job_status_logs l
+       LEFT JOIN users u ON u.id = l.user_id
+       LEFT JOIN job_statuses fs ON fs.id = l.from_status_id
+       LEFT JOIN job_statuses ts ON ts.id = l.to_status_id
        WHERE l.job_id = ? AND l.tenant_id = ? ORDER BY l.id`,
       [job.id, t],
     );
@@ -148,15 +160,18 @@ module.exports = function jobRoutes(db) {
     const depositMethod = oneOf(req.body.deposit_method, METHOD_KEYS, 'ช่องทางชำระ', 'cash');
     const job = await db.tx(async (tx) => {
       // UPDATE ... RETURNING ล็อกแถวร้านไว้ ทำให้เลขที่งานไม่ซ้ำแม้รับงานพร้อมกัน
+      // สถานะเริ่มต้น = สถานะ "ระหว่างดำเนินการ" ลำดับแรกที่เปิดใช้งาน
+      const start = await tx.one("SELECT id FROM job_statuses WHERE tenant_id = ? AND kind = 'open' AND active ORDER BY sort_order, id LIMIT 1", [t]);
+      if (!start) throw new HttpError(400, 'ยังไม่มีสถานะงานเริ่มต้น — ตั้งค่าที่ ตั้งค่า → สถานะงาน');
       const { job_seq: seq } = await tx.one('UPDATE tenants SET job_seq = job_seq + 1 WHERE id = ? RETURNING job_seq', [t]);
       const jobNo = `J${today().slice(2, 7).replace('-', '')}-${String(seq).padStart(4, '0')}`;
       const cols = Object.keys(d);
       const { id } = await tx.one(
-        `INSERT INTO jobs (tenant_id, job_no, created_by, ${cols.join(', ')}) VALUES (?, ?, ?, ${cols.map(() => '?').join(', ')}) RETURNING id`,
-        [t, jobNo, req.user.id, ...cols.map((c) => d[c])],
+        `INSERT INTO jobs (tenant_id, job_no, created_by, status_id, ${cols.join(', ')}) VALUES (?, ?, ?, ?, ${cols.map(() => '?').join(', ')}) RETURNING id`,
+        [t, jobNo, req.user.id, start.id, ...cols.map((c) => d[c])],
       );
-      await tx.run("INSERT INTO job_status_logs (tenant_id, job_id, from_status, to_status, note, user_id) VALUES (?, ?, NULL, 'new', ?, ?)", [
-        t, id, 'รับงาน', req.user.id,
+      await tx.run('INSERT INTO job_status_logs (tenant_id, job_id, to_status_id, note, user_id) VALUES (?, ?, ?, ?, ?)', [
+        t, id, start.id, 'รับงาน', req.user.id,
       ]);
       if (deposit > 0) {
         await tx.run("INSERT INTO payments (tenant_id, job_id, amount, kind, method, paid_at, user_id) VALUES (?, ?, ?, 'deposit', ?, ?, ?)", [
@@ -180,18 +195,22 @@ module.exports = function jobRoutes(db) {
   r.post('/jobs/:id/status', async (req, res) => {
     const t = req.user.tenant_id;
     const job = await getJob(t, intId(req.params.id));
-    const status = oneOf(req.body.status, STATUS_KEYS, 'สถานะ', null);
-    if (!status) throw new HttpError(400, 'กรุณาเลือกสถานะ');
-    if (status === job.status) throw new HttpError(400, 'งานอยู่ในสถานะนี้แล้ว');
+    const statusId = num(req.body.status_id, 'สถานะ', { min: 1 });
+    if (!statusId) throw new HttpError(400, 'กรุณาเลือกสถานะ');
+    const next = await db.one('SELECT id, kind, active FROM job_statuses WHERE id = ? AND tenant_id = ?', [statusId, t]);
+    if (!next || !next.active) throw new HttpError(400, 'ไม่พบสถานะ');
+    if (next.id === job.status_id) throw new HttpError(400, 'งานอยู่ในสถานะนี้แล้ว');
     const updated = await db.tx(async (tx) => {
+      // delivered_at = เวลาส่งมอบครั้งแรก (ใช้คำนวณส่งตรงเวลา), completed_at = เวลาปิดงาน
       await tx.run(
-        `UPDATE jobs SET status = ?, updated_at = now(),
-           completed_at = CASE WHEN ? = 'completed' THEN now() ELSE NULL END
+        `UPDATE jobs SET status_id = ?, updated_at = now(),
+           delivered_at = CASE WHEN ? IN ('delivered', 'done') THEN COALESCE(delivered_at, now()) ELSE NULL END,
+           completed_at = CASE WHEN ? = 'done' THEN now() ELSE NULL END
          WHERE id = ?`,
-        [status, status, job.id],
+        [next.id, next.kind, next.kind, job.id],
       );
-      await tx.run('INSERT INTO job_status_logs (tenant_id, job_id, from_status, to_status, note, user_id) VALUES (?, ?, ?, ?, ?, ?)', [
-        t, job.id, job.status, status, str(req.body.note), req.user.id,
+      await tx.run('INSERT INTO job_status_logs (tenant_id, job_id, from_status_id, to_status_id, note, user_id) VALUES (?, ?, ?, ?, ?, ?)', [
+        t, job.id, job.status_id, next.id, str(req.body.note), req.user.id,
       ]);
       return getJob(t, job.id, tx);
     });

@@ -1,7 +1,7 @@
 const express = require('express');
 const { hashPassword, verifyPassword, createSession, destroySession, requireAuth, requireRole } = require('../auth');
 const { HttpError, str, requireStr } = require('../util');
-const { DEFAULT_JOB_TYPES_VALUES } = require('../schema');
+const { DEFAULT_JOB_TYPES_VALUES, DEFAULT_JOB_STATUSES_VALUES } = require('../schema');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const TENANT_COLS = 'id, name, phone, email, address, tax_id';
@@ -31,6 +31,11 @@ module.exports = function authRoutes(db) {
       await t.run(
         `INSERT INTO job_types (tenant_id, name, description, requires_detail, sort_order)
          SELECT ?, v.* FROM (VALUES ${DEFAULT_JOB_TYPES_VALUES}) AS v(name, description, requires_detail, sort_order)`,
+        [tenant.id],
+      );
+      await t.run(
+        `INSERT INTO job_statuses (tenant_id, name, description, color, kind, sort_order)
+         SELECT ?, v.* FROM (VALUES ${DEFAULT_JOB_STATUSES_VALUES}) AS v(name, description, color, kind, sort_order)`,
         [tenant.id],
       );
       const user = await t.one(

@@ -1,7 +1,7 @@
 /* CRM ร้านป้าย — หน้าเว็บแบบ single-page (vanilla JS) */
 'use strict';
 
-const state = { token: localStorage.getItem('token'), me: null, meta: null, users: [], jobTypes: [] };
+const state = { token: localStorage.getItem('token'), me: null, meta: null, users: [], jobTypes: [], jobStatuses: [] };
 const $app = document.getElementById('app');
 
 // ---------- helpers ----------
@@ -14,13 +14,12 @@ const thDate = (s) => (s ? parseDate(s).toLocaleDateString('th-TH', { day: 'nume
 const thDateTime = (s) => (s ? parseDate(s).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }) : '-');
 const todayStr = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const label = (list, key) => (list.find((x) => x.key === key) || {}).label || key || '-';
-const statusOf = (key) => state.meta.JOB_STATUSES.find((s) => s.key === key) || { label: key, color: '#999' };
-const badge = (key) => {
-  const s = statusOf(key);
-  return `<span class="badge" style="background:${s.color}">${esc(s.label)}</span>`;
-};
-const isOpen = (status) => state.meta.OPEN_STATUSES.includes(status);
-const isOverdue = (j) => j.due_date && isOpen(j.status) && j.due_date < todayStr();
+// สถานะงานมาจาก master ของร้าน (ชื่อ + สี); สีตรวจรูปแบบอีกชั้นก่อนใส่ใน style
+const safeColor = (c) => (/^#[0-9a-f]{6}$/i.test(c || '') ? c : '#64748b');
+const badge = (name, color) => `<span class="badge" style="background:${safeColor(color)}">${esc(name || '-')}</span>`;
+const jobBadge = (j) => badge(j.status_name, j.status_color);
+const isOverdue = (j) => j.due_date && j.status_kind === 'open' && j.due_date < todayStr();
+const activeStatuses = () => state.jobStatuses.filter((x) => x.active);
 const dueHtml = (j) => (j.due_date ? `<span class="${isOverdue(j) ? 'overdue' : ''}">${thDate(j.due_date)}</span>` : '<span class="muted">-</span>');
 const prioTag = (p) => (p && p !== 'normal' ? `<span class="tag ${esc(p)}">${esc(label(state.meta.PRIORITIES, p))}</span>` : '');
 const mapsSearchUrl = (q) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
@@ -108,6 +107,7 @@ async function loadSession() {
   state.me = await api('GET', '/auth/me');
   state.users = await api('GET', '/users');
   state.jobTypes = await api('GET', '/job-types?all=1');
+  state.jobStatuses = await api('GET', '/job-statuses?all=1');
 }
 
 function renderAuth(mode) {
@@ -191,8 +191,8 @@ async function viewDashboard() {
     <div class="card">
       <h2>สถานะงาน</h2>
       <div class="status-pills">
-        ${state.meta.JOB_STATUSES.map((s) => `
-          <a class="status-pill" href="#/jobs?status=${s.key}"><span class="dot" style="background:${s.color}"></span>${esc(s.label)} <b>${d.status_counts[s.key]}</b></a>`).join('')}
+        ${d.status_counts.map((s) => `
+          <a class="status-pill" href="#/jobs?status_id=${s.id}"><span class="dot" style="background:${safeColor(s.color)}"></span>${esc(s.name)} <b>${s.n}</b></a>`).join('')}
       </div>
     </div>
     <div class="card">
@@ -201,7 +201,7 @@ async function viewDashboard() {
         <tr><th>เลขที่</th><th>งาน</th><th>ลูกค้า</th><th>สถานะ</th><th>กำหนดส่ง</th></tr>
         ${d.upcoming.map((j) => `<tr class="click" data-href="#/jobs/${j.id}">
           <td class="nowrap">${esc(j.job_no)}</td><td>${esc(j.title)} ${prioTag(j.priority)}</td><td>${esc(j.customer_name)}</td>
-          <td>${badge(j.status)}</td><td class="nowrap">${dueHtml(j)}</td></tr>`).join('')}
+          <td>${jobBadge(j)}</td><td class="nowrap">${dueHtml(j)}</td></tr>`).join('')}
       </table></div>` : '<p class="muted">ไม่มีงานค้างที่กำหนดวันส่ง</p>'}
     </div>`);
   main.querySelector('#new-job').addEventListener('click', () => jobForm());
@@ -252,8 +252,8 @@ async function viewCustomers(params) {
 
 async function viewCustomer(id) {
   const c = await api('GET', `/customers/${id}`);
-  const total = c.jobs.filter((j) => j.status !== 'cancelled').reduce((s, j) => s + j.price, 0);
-  const paid = c.jobs.filter((j) => j.status !== 'cancelled').reduce((s, j) => s + j.paid, 0);
+  const total = c.jobs.filter((j) => j.status_kind !== 'cancelled').reduce((s, j) => s + j.price, 0);
+  const paid = c.jobs.filter((j) => j.status_kind !== 'cancelled').reduce((s, j) => s + j.paid, 0);
   const main = shell('customers', `
     <div class="page-head">
       <h1><a href="#/customers" class="muted">ลูกค้า</a> / ${esc(c.name)}</h1>
@@ -283,7 +283,7 @@ async function viewCustomer(id) {
     </div>
     <div class="card table-wrap"><h2>ประวัติงาน</h2>
       ${c.jobs.length ? `<table><tr><th>เลขที่</th><th>งาน</th><th>สถานะ</th><th class="right">ราคา</th><th class="right">ชำระแล้ว</th><th>กำหนดส่ง</th><th>วันที่รับงาน</th></tr>
-        ${c.jobs.map((j) => `<tr class="click" data-href="#/jobs/${j.id}"><td class="nowrap">${esc(j.job_no)}</td><td>${esc(j.title)}</td><td>${badge(j.status)}</td>
+        ${c.jobs.map((j) => `<tr class="click" data-href="#/jobs/${j.id}"><td class="nowrap">${esc(j.job_no)}</td><td>${esc(j.title)}</td><td>${jobBadge(j)}</td>
           <td class="right">${baht(j.price)}</td><td class="right">${baht(j.paid)}</td><td class="nowrap">${dueHtml(j)}</td><td class="nowrap">${thDate(j.created_at)}</td></tr>`).join('')}
       </table>` : '<p class="muted">ยังไม่มีงาน</p>'}
     </div>`);
@@ -380,30 +380,33 @@ async function viewJobs(params) {
   const mode = params.get('view') || localStorage.getItem('jobsView') || 'board';
   localStorage.setItem('jobsView', mode);
   const q = params.get('q') || '';
-  const status = params.get('status') || '';
+  const status = params.get('status_id') || '';
   const overdue = params.get('overdue') === '1';
   const assigned = params.get('assigned_to') || '';
   const jobType = params.get('job_type_id') || '';
   const delivery = params.get('delivery_method') || '';
-  const qs = new URLSearchParams({ limit: '200', q, status, assigned_to: assigned, job_type_id: jobType, delivery_method: delivery, ...(overdue ? { overdue: '1' } : {}) });
-  // มุมมองบอร์ด: ซ่อนงานที่เสร็จ/ยกเลิกเว้นแต่กรองสถานะเอง
+  const qs = new URLSearchParams({ limit: '200', q, status_id: status, assigned_to: assigned, job_type_id: jobType, delivery_method: delivery, ...(overdue ? { overdue: '1' } : {}) });
+  // มุมมองบอร์ด: ซ่อนงานที่ปิด/ยกเลิกแล้ว เว้นแต่กรองสถานะเอง
   if (mode === 'board' && !status) qs.set('open', '1');
   const data = await api('GET', `/jobs?${qs}`);
-  const S = state.meta.JOB_STATUSES;
+  const S = state.jobStatuses;
 
   const table = `<div class="card table-wrap">${data.rows.length ? `<table>
     <tr><th>เลขที่</th><th>งาน</th><th>ลูกค้า</th><th>ประเภท</th><th>ส่งมอบ</th><th>สถานะ</th><th>ผู้รับผิดชอบ</th><th class="right">ราคา</th><th class="right">ค้างชำระ</th><th>กำหนดส่ง</th></tr>
     ${data.rows.map((j) => `<tr class="click" data-href="#/jobs/${j.id}">
       <td class="nowrap">${esc(j.job_no)}</td><td>${esc(j.title)} ${prioTag(j.priority)}</td><td>${esc(j.customer_name)}</td><td>${esc(j.sign_type || '-')}</td>
-      <td>${esc(j.delivery_method ? label(state.meta.DELIVERY_METHODS, j.delivery_method) : '-')}</td><td>${badge(j.status)}</td><td>${esc(j.assigned_name || '-')}</td><td class="right">${baht(j.price)}</td>
+      <td>${esc(j.delivery_method ? label(state.meta.DELIVERY_METHODS, j.delivery_method) : '-')}</td><td>${jobBadge(j)}</td><td>${esc(j.assigned_name || '-')}</td><td class="right">${baht(j.price)}</td>
       <td class="right">${j.price - j.paid > 0 ? baht(j.price - j.paid) : '-'}</td><td class="nowrap">${dueHtml(j)}</td></tr>`).join('')}
   </table>` : '<p class="muted">ไม่พบงาน</p>'}</div>`;
 
-  const cols = status ? S.filter((s) => status.split(',').includes(s.key)) : S.filter((s) => isOpen(s.key));
+  // คอลัมน์บอร์ด: สถานะที่ยังไม่ปิด (ซ่อนคอลัมน์ที่ปิดใช้งานถ้าไม่มีงานค้าง)
+  const cols = status
+    ? S.filter((s) => status.split(',').includes(String(s.id)))
+    : S.filter((s) => ['open', 'delivered'].includes(s.kind) && (s.active || data.rows.some((j) => j.status_id === s.id)));
   const board = `<div class="board">${cols.map((s) => {
-    const items = data.rows.filter((j) => j.status === s.key);
-    return `<div class="col"><h3><span>${esc(s.label)}</span><span class="muted">${items.length}</span></h3>
-      ${items.map((j) => `<div class="job-card" style="border-color:${s.color}" data-href="#/jobs/${j.id}">
+    const items = data.rows.filter((j) => j.status_id === s.id);
+    return `<div class="col"><h3><span>${esc(s.name)}</span><span class="muted">${items.length}</span></h3>
+      ${items.map((j) => `<div class="job-card" style="border-color:${safeColor(s.color)}" data-href="#/jobs/${j.id}">
         <div class="no">${esc(j.job_no)} ${prioTag(j.priority)}</div>
         <div class="t">${esc(j.title)}</div>
         <div class="meta"><span>${esc(j.customer_name)}</span><span>${dueHtml(j)}</span></div>
@@ -416,7 +419,7 @@ async function viewJobs(params) {
     <div class="page-head"><h1>งาน <span class="muted">(${data.total})</span></h1><button class="btn primary" id="new-job">+ รับงานใหม่</button></div>
     <form class="toolbar" id="filters">
       <input name="q" placeholder="ค้นหาเลขที่, ชื่องาน, ลูกค้า" value="${esc(q)}">
-      <select name="status">${options(S, status, { empty: mode === 'board' ? 'งานที่ยังไม่เสร็จ' : 'ทุกสถานะ' })}</select>
+      <select name="status_id">${options(S.map((x) => ({ key: x.id, label: x.name })), status, { empty: mode === 'board' ? 'งานที่ยังไม่ปิด' : 'ทุกสถานะ' })}</select>
       <select name="job_type_id">${options(state.jobTypes.map((t) => ({ key: t.id, label: t.name })), jobType, { empty: 'ทุกประเภทงาน' })}</select>
       <select name="delivery_method">${options(state.meta.DELIVERY_METHODS, delivery, { empty: 'ทุกวิธีส่งมอบ' })}</select>
       <select name="assigned_to">${options(state.users.map((u) => ({ key: u.id, label: u.name })), assigned, { empty: 'ผู้รับผิดชอบทั้งหมด' })}</select>
@@ -432,7 +435,7 @@ async function viewJobs(params) {
   const go = (view) => {
     const f = formData(form);
     const p = new URLSearchParams({ view });
-    for (const k of ['q', 'status', 'job_type_id', 'delivery_method', 'assigned_to']) if (f[k]) p.set(k, f[k]);
+    for (const k of ['q', 'status_id', 'job_type_id', 'delivery_method', 'assigned_to']) if (f[k]) p.set(k, f[k]);
     if (f.overdue) p.set('overdue', '1');
     location.hash = `#/jobs?${p}`;
   };
@@ -444,11 +447,12 @@ async function viewJobs(params) {
   main.querySelector('#new-job').addEventListener('click', () => jobForm());
 }
 
-// สถานะถัดไปตามลำดับขั้นตอน (ใช้เป็นค่าเริ่มต้นตอนเปลี่ยนสถานะ)
-function nextStatus(key) {
-  const open = state.meta.OPEN_STATUSES;
-  const i = open.indexOf(key);
-  return i === -1 ? '' : open[i + 1] || 'completed';
+// สถานะถัดไปตามลำดับใน master (ใช้เป็นค่าเริ่มต้นตอนเปลี่ยนสถานะ)
+function nextStatusId(currentId) {
+  const list = activeStatuses();
+  const cur = state.jobStatuses.find((x) => x.id === currentId);
+  const next = cur && list.find((x) => x.sort_order > cur.sort_order && x.kind !== 'cancelled');
+  return next ? next.id : '';
 }
 
 async function viewJob(id) {
@@ -458,7 +462,7 @@ async function viewJob(id) {
   const pct = j.price > 0 ? Math.min(100, Math.round((j.paid / j.price) * 100)) : 0;
   const main = shell('jobs', `
     <div class="page-head">
-      <h1><a href="#/jobs" class="muted">งาน</a> / ${esc(j.job_no)} ${badge(j.status)}</h1>
+      <h1><a href="#/jobs" class="muted">งาน</a> / ${esc(j.job_no)} ${jobBadge(j)}</h1>
       <div class="toolbar" style="margin:0">
         <button class="btn" onclick="window.print()">พิมพ์</button>
         <button class="btn" id="edit">แก้ไข</button>
@@ -485,7 +489,8 @@ async function viewJob(id) {
       <div>
         <div class="card"><h2>อัปเดตสถานะ</h2>
           <form id="status-form" class="form" style="grid-template-columns:1fr">
-            <select name="status">${options(M.JOB_STATUSES.filter((s) => s.key !== j.status), nextStatus(j.status))}</select>
+            <select name="status_id">${options(activeStatuses().filter((x) => x.id !== j.status_id).map((x) => ({ key: x.id, label: x.name })), nextStatusId(j.status_id))}</select>
+            <div class="muted" id="status-hint" style="font-size:13px;margin-top:-6px"></div>
             <input name="note" placeholder="หมายเหตุ (ถ้ามี)">
             <button class="btn primary" type="submit">เปลี่ยนสถานะ</button>
           </form>
@@ -504,13 +509,22 @@ async function viewJob(id) {
       </div>
     </div>
     <div class="card"><h2>ประวัติสถานะ</h2><ul class="timeline">
-      ${j.logs.map((l) => `<li>${l.from_status ? `${badge(l.from_status)} → ` : ''}${badge(l.to_status)}
+      ${j.logs.map((l) => `<li>${l.from_status_id ? `${badge(l.from_name, l.from_color)} → ` : ''}${badge(l.to_name, l.to_color)}
         <span class="muted"> · ${thDateTime(l.created_at)} · ${esc(l.user_name || '-')}</span>${l.note ? `<div>${esc(l.note)}</div>` : ''}</li>`).join('')}
     </ul></div>`);
 
   main.querySelector('#edit').addEventListener('click', () => jobForm(j));
-  main.querySelector('#status-form').addEventListener('submit', async (e) => {
+  const statusForm = main.querySelector('#status-form');
+  const syncStatusHint = () => {
+    const x = state.jobStatuses.find((y) => y.id === Number(statusForm.status_id.value));
+    statusForm.querySelector('#status-hint').textContent = x?.description || '';
+  };
+  statusForm.status_id.addEventListener('change', syncStatusHint);
+  syncStatusHint();
+  statusForm.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const target = state.jobStatuses.find((y) => y.id === Number(statusForm.status_id.value));
+    if (target?.kind === 'done' && remaining > 0 && !confirm(`งานนี้ยังค้างชำระ ${baht(remaining)} ต้องการปิดงานใช่ไหม?`)) return;
     try {
       await api('POST', `/jobs/${j.id}/status`, formData(e.target));
       toast('อัปเดตสถานะแล้ว');
@@ -604,10 +618,8 @@ async function viewReports(params) {
           <td class="right nowrap">${x.jobs} งาน</td><td class="right nowrap">${baht(x.value)}</td></tr>`).join('')}</table>` : '<p class="muted">ไม่มีข้อมูล</p>'}
       </div>
       <div class="card"><h2>งานแยกตามสถานะ</h2>
-        ${r.by_status.length ? `<table>${state.meta.JOB_STATUSES.map((s) => {
-          const x = r.by_status.find((b) => b.status === s.key);
-          return x ? `<tr><td>${badge(s.key)}</td><td class="right">${x.jobs} งาน</td><td class="right">${baht(x.value)}</td></tr>` : '';
-        }).join('')}</table>` : '<p class="muted">ไม่มีข้อมูล</p>'}
+        ${r.by_status.length ? `<table>${r.by_status.map((x) =>
+          `<tr><td>${badge(x.name, x.color)}</td><td class="right">${x.jobs} งาน</td><td class="right">${baht(x.value)}</td></tr>`).join('')}</table>` : '<p class="muted">ไม่มีข้อมูล</p>'}
       </div>
       <div class="card"><h2>ลูกค้ายอดสูงสุด</h2>
         ${r.top_customers.length ? `<table><tr><th>ลูกค้า</th><th class="right">งาน</th><th class="right">มูลค่า</th></tr>
@@ -651,9 +663,24 @@ function jobTypeFormHtml(t = {}) {
   </form>`;
 }
 
+function jobStatusFormHtml(x = {}) {
+  return `<form class="form">
+    <div><label>ชื่อสถานะ *</label><input name="name" required value="${esc(x.name)}"></div>
+    <div><label>สี</label><input name="color" type="color" value="${safeColor(x.color)}" style="height:40px;padding:4px"></div>
+    <div class="full"><label>ความหมาย</label><input name="description" value="${esc(x.description)}"></div>
+    <div class="full"><label>ประเภทสถานะ (ระบบใช้คำนวณงานค้าง/เลยกำหนด/ยอดขาย)</label>
+      <select name="kind">${options(state.meta.STATUS_KINDS, x.kind || 'open')}</select>
+      <div class="muted" style="font-size:13px;margin-top:4px">ระหว่างดำเนินการ = นับงานเลยกำหนด · ส่งมอบแล้ว = บันทึกวันส่งมอบ · ปิดงาน = งานจบ · ยกเลิก = ไม่นับยอดขาย</div></div>
+    ${x.id ? `<div class="full check"><input type="checkbox" name="active" id="sa" ${x.active ? 'checked' : ''}><label for="sa" style="margin:0">เปิดใช้งาน</label></div>` : ''}
+    <div class="full error"></div>
+    <div class="full form-actions"><button type="button" class="btn" data-close>ยกเลิก</button><button class="btn primary" type="submit">บันทึก</button></div>
+  </form>`;
+}
+
 async function viewSettings() {
   state.users = await api('GET', '/users');
   state.jobTypes = await api('GET', '/job-types?all=1');
+  state.jobStatuses = await api('GET', '/job-statuses?all=1');
   const t = state.me.tenant;
   const admin = isAdmin();
   const main = shell('settings', `
@@ -678,6 +705,18 @@ async function viewSettings() {
       </div>
     </div>
     <div class="card table-wrap">
+      <div class="page-head"><h2 style="margin:0">สถานะงาน</h2>${admin ? '<button class="btn primary" id="add-status">+ เพิ่มสถานะ</button>' : ''}</div>
+      <table><tr><th>ลำดับ</th><th>สถานะ</th><th>ความหมาย</th><th>ประเภท</th><th class="right">งานปัจจุบัน</th><th>ใช้งาน</th>${admin ? '<th></th>' : ''}</tr>
+        ${state.jobStatuses.map((x, i, all) => `<tr>
+          <td class="nowrap">${i + 1}${admin ? ` <button class="icon-btn" data-move="${x.id}" data-dir="-1" title="เลื่อนขึ้น" ${i === 0 ? 'disabled' : ''}>▲</button><button class="icon-btn" data-move="${x.id}" data-dir="1" title="เลื่อนลง" ${i === all.length - 1 ? 'disabled' : ''}>▼</button>` : ''}</td>
+          <td>${badge(x.name, x.color)}</td><td>${esc(x.description || '-')}</td><td class="nowrap">${esc(label(state.meta.STATUS_KINDS, x.kind))}</td>
+          <td class="right">${x.job_count}</td><td>${x.active ? 'ใช้งาน' : '<span class="muted">ปิดใช้งาน</span>'}</td>
+          ${admin ? `<td class="nowrap"><button class="btn small" data-edit-status="${x.id}">แก้ไข</button>
+            ${x.job_count ? '' : `<button class="btn small danger" data-del-status="${x.id}">ลบ</button>`}</td>` : ''}</tr>`).join('')}
+      </table>
+      <p class="muted" style="font-size:13px;margin-bottom:0">งานใหม่จะเริ่มที่สถานะ "ระหว่างดำเนินการ" ลำดับแรกที่เปิดใช้งาน</p>
+    </div>
+    <div class="card table-wrap">
       <div class="page-head"><h2 style="margin:0">ประเภทงาน</h2>${admin ? '<button class="btn primary" id="add-type">+ เพิ่มประเภทงาน</button>' : ''}</div>
       <table><tr><th>ประเภทงาน</th><th>รายละเอียด</th><th>ต้องระบุรายละเอียด</th><th class="right">จำนวนงาน</th><th>สถานะ</th>${admin ? '<th></th>' : ''}</tr>
         ${state.jobTypes.map((jt) => `<tr><td>${esc(jt.name)}</td><td>${esc(jt.description || '-')}</td><td>${jt.requires_detail ? '✓' : ''}</td>
@@ -695,6 +734,51 @@ async function viewSettings() {
       </table>
     </div>`);
 
+  main.querySelector('#add-status')?.addEventListener('click', () =>
+    openModal('เพิ่มสถานะงาน', jobStatusFormHtml(), async (data) => {
+      await api('POST', '/job-statuses', data);
+      toast('เพิ่มสถานะแล้ว');
+      route();
+    }),
+  );
+  main.querySelectorAll('[data-edit-status]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const x = state.jobStatuses.find((y) => y.id === Number(b.dataset.editStatus));
+      openModal('แก้ไขสถานะงาน', jobStatusFormHtml(x), async (data) => {
+        await api('PUT', `/job-statuses/${x.id}`, data);
+        toast('บันทึกสถานะแล้ว');
+        route();
+      });
+    }),
+  );
+  main.querySelectorAll('[data-del-status]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const x = state.jobStatuses.find((y) => y.id === Number(b.dataset.delStatus));
+      if (!confirm(`ลบสถานะ "${x.name}"?`)) return;
+      try {
+        await api('DELETE', `/job-statuses/${x.id}`);
+        toast('ลบสถานะแล้ว');
+        route();
+      } catch (ex) {
+        toast(ex.message, true);
+      }
+    }),
+  );
+  main.querySelectorAll('[data-move]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const ids = state.jobStatuses.map((y) => y.id);
+      const i = ids.indexOf(Number(b.dataset.move));
+      const j = i + Number(b.dataset.dir);
+      if (j < 0 || j >= ids.length) return;
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+      try {
+        state.jobStatuses = await api('PUT', '/job-statuses/order', { ids });
+        route();
+      } catch (ex) {
+        toast(ex.message, true);
+      }
+    }),
+  );
   main.querySelector('#add-type')?.addEventListener('click', () =>
     openModal('เพิ่มประเภทงาน', jobTypeFormHtml(), async (data) => {
       await api('POST', '/job-types', data);
