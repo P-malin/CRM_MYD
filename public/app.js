@@ -220,7 +220,7 @@ function customerFormHtml(c = {}) {
 }
 
 function customerForm(c, after) {
-  openModal(c ? 'แก้ไขข้อมูลลูกค้า' : 'เพิ่มลูกค้าใหม่', customerFormHtml(c), async (data) => {
+  openModal(c ? 'แก้ไขข้อมูลลูกค้า' : 'เพิ่มลูกค้าใหม่', customerFormHtml(c || {}), async (data) => {
     const saved = await api(c ? 'PUT' : 'POST', c ? `/customers/${c.id}` : '/customers', data);
     toast('บันทึกข้อมูลลูกค้าแล้ว');
     after ? after(saved) : route();
