@@ -45,6 +45,7 @@ function openPg(url) {
     ssl: local || process.env.PGSSL === 'disable' ? false : { rejectUnauthorized: false },
     max: Number(process.env.PG_POOL_MAX) || 3,
     idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 8_000,
   });
   const exec = async (sql, params) => {
     const r = await pool.query(sql, params);
@@ -106,6 +107,10 @@ async function migrate(db) {
  * ส่ง ':memory:' เพื่อใช้ฐานข้อมูลชั่วคราว (เทสต์)
  */
 async function openDb(target = process.env.DATABASE_URL || process.env.PGLITE_DIR || 'data/pglite') {
+  // บน Vercel ไม่มีที่เก็บไฟล์ถาวร จึงต้องมี DATABASE_URL เสมอ
+  if (process.env.VERCEL && !/^postgres(ql)?:\/\//.test(target)) {
+    throw Object.assign(new Error('DATABASE_URL is not set'), { code: 'NO_DATABASE_URL' });
+  }
   const db = /^postgres(ql)?:\/\//.test(target) ? openPg(target) : openPglite(target);
   await migrate(db);
   return db;
