@@ -63,4 +63,4 @@ function requireRole(...roles) {
   };
 }
 
-module.exports = { hashPassword, verifyPassword, createSession, destroySession, requireAuth, requireRole };
+module.exports = { hashPassword, verifyPassword, createSession, destroySession, requireAuth, requireRole, sha256 };

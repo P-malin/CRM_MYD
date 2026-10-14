@@ -467,3 +467,61 @@ test('ใบเสนอราคา', async () => {
   await call('DELETE', `/jobs/${job.id}`, { token });
   assert.equal((await call('GET', '/quotations', { token })).data.total, 0);
 });
+
+test('ลืมรหัสผ่าน / ตั้งรหัสผ่านใหม่ทางอีเมล', async () => {
+  const mail = require('../src/mail');
+  const before = process.env.MAIL_CAPTURE;
+  // ยังไม่ตั้งค่าอีเมล → แจ้งชัดเจน
+  delete process.env.MAIL_CAPTURE;
+  const saved = { host: process.env.SMTP_HOST };
+  delete process.env.SMTP_HOST;
+  assert.equal((await call('POST', '/auth/forgot', { body: { email: 'x@y.test' } })).status, 503);
+  process.env.MAIL_CAPTURE = '1';
+
+  const oldToken = await register('ร้านลืมรหัส', 'forgot@shop.test');
+  mail.outbox.length = 0;
+
+  // อีเมลที่ไม่มีบัญชี → ตอบเหมือนกัน แต่ไม่ส่งอีเมล
+  const unknown = await call('POST', '/auth/forgot', { body: { email: 'nobody@shop.test' } });
+  assert.equal(unknown.status, 200);
+  assert.equal(mail.outbox.length, 0);
+  assert.equal((await call('POST', '/auth/forgot', { body: { email: 'not-an-email' } })).status, 400);
+
+  // อีเมลที่มีบัญชี (ตัวพิมพ์ใหญ่เล็กไม่สำคัญ) → ส่งลิงก์
+  const ok = await call('POST', '/auth/forgot', { body: { email: 'Forgot@Shop.test' } });
+  assert.equal(ok.data.message, unknown.data.message);
+  assert.equal(mail.outbox.length, 1);
+  const sent = mail.outbox[0];
+  assert.equal(sent.to, 'forgot@shop.test');
+  const token = sent.text.match(/#\/reset\?token=([\w-]+)/)[1];
+  assert.ok(sent.html.includes(token));
+
+  // ลิงก์ผิด / รหัสสั้น
+  assert.equal((await call('POST', '/auth/reset', { body: { token: 'bad', password: 'newpassword1' } })).status, 400);
+  assert.equal((await call('POST', '/auth/reset', { body: { token, password: 'short' } })).status, 400);
+
+  // ตั้งใหม่สำเร็จ → ได้ session ใหม่, session เก่าใช้ไม่ได้, รหัสเดิมใช้ไม่ได้
+  const reset = await call('POST', '/auth/reset', { body: { token, password: 'newpassword1' } });
+  assert.equal(reset.status, 200);
+  assert.equal((await call('GET', '/auth/me', { token: reset.data.token })).status, 200);
+  assert.equal((await call('GET', '/auth/me', { token: oldToken })).status, 401);
+  assert.equal((await call('POST', '/auth/login', { body: { email: 'forgot@shop.test', password: 'password123' } })).status, 401);
+  assert.equal((await call('POST', '/auth/login', { body: { email: 'forgot@shop.test', password: 'newpassword1' } })).status, 200);
+
+  // ลิงก์ใช้ซ้ำไม่ได้
+  assert.equal((await call('POST', '/auth/reset', { body: { token, password: 'another-pass1' } })).status, 400);
+
+  // ขอได้ไม่เกิน 3 ครั้ง / 15 นาที (ครั้งที่เกินตอบปกติแต่ไม่ส่ง)
+  mail.outbox.length = 0;
+  for (let i = 0; i < 4; i++) assert.equal((await call('POST', '/auth/forgot', { body: { email: 'forgot@shop.test' } })).status, 200);
+  assert.equal(mail.outbox.length, 2); // 1 ครั้งก่อนหน้า + 2 ครั้งนี้ = 3
+
+  // ลิงก์หมดอายุ
+  const t2 = mail.outbox[1].text.match(/#\/reset\?token=([\w-]+)/)[1];
+  await db.run("UPDATE password_resets SET expires_at = now() - interval '1 minute' WHERE used_at IS NULL");
+  assert.equal((await call('POST', '/auth/reset', { body: { token: t2, password: 'newpassword2' } })).status, 400);
+
+  if (before === undefined) delete process.env.MAIL_CAPTURE;
+  else process.env.MAIL_CAPTURE = before;
+  if (saved.host) process.env.SMTP_HOST = saved.host;
+});

@@ -16,8 +16,8 @@ const legacyCase = (col) =>
   `CASE ${col} ${DEFAULT_JOB_STATUSES.filter((t) => t.legacy).map((t) => `WHEN ${sqlStr(t.legacy)} THEN ${sqlStr(t.name)}`).join(' ')} END`;
 
 // เพิ่มเลขนี้ทุกครั้งที่แก้ schema เพื่อให้ระบบรัน migration ใหม่
-const SCHEMA_VERSION = 8;
-const TABLES = ['schema_version', 'tenants', 'users', 'sessions', 'customers', 'job_types', 'job_statuses', 'jobs', 'notification_logs', 'quotations', 'quotation_items', 'job_status_logs', 'payments'];
+const SCHEMA_VERSION = 9;
+const TABLES = ['schema_version', 'tenants', 'users', 'sessions', 'customers', 'job_types', 'job_statuses', 'jobs', 'notification_logs', 'quotations', 'quotation_items', 'password_resets', 'job_status_logs', 'payments'];
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -208,6 +208,16 @@ CREATE TABLE IF NOT EXISTS quotation_items (
   amount        numeric(12,2) NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_quotation_items_quote ON quotation_items(quotation_id);
+
+-- ลิงก์รีเซ็ตรหัสผ่าน (เก็บเฉพาะ hash ของ token)
+CREATE TABLE IF NOT EXISTS password_resets (
+  token_hash  text PRIMARY KEY,
+  user_id     integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at  timestamptz NOT NULL,
+  used_at     timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id, created_at);
 
 -- ===== การอัปเกรดฐานข้อมูลเดิม (รันหลังสร้างตารางครบแล้ว) =====
 -- v2: ผูกงานกับ master ประเภทงาน (sign_type เก็บชื่อประเภทไว้ใช้ทำรายงาน)

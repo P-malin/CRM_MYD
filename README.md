@@ -8,7 +8,7 @@
 
 | โมดูล | รายละเอียด |
 |---|---|
-| **สมัคร/เข้าสู่ระบบ** | ร้านใหม่สมัครเองได้ (สร้างร้าน + บัญชีเจ้าของร้าน), เพิ่มพนักงานได้ 3 ระดับสิทธิ์: เจ้าของร้าน / ผู้ดูแล / พนักงาน |
+| **สมัคร/เข้าสู่ระบบ** | ร้านใหม่สมัครเองได้ (สร้างร้าน + บัญชีเจ้าของร้าน), ลืมรหัสผ่าน → ส่งลิงก์ตั้งรหัสใหม่ทางอีเมล (ใช้ได้ 30 นาที ครั้งเดียว), เพิ่มพนักงานได้ 3 ระดับสิทธิ์: เจ้าของร้าน / ผู้ดูแล / พนักงาน |
 | **ข้อมูลลูกค้า** | ชื่อ บริษัท เบอร์โทร LINE อีเมล ที่อยู่ เลขผู้เสียภาษี หมายเหตุ, ค้นหา, ประวัติงานและยอดค้างชำระของลูกค้าแต่ละราย |
 | **ประเภทงาน (master)** | แต่ละร้านมีรายการประเภทงานของตัวเอง เริ่มต้น 8 ประเภท (อักษรอะคริลิก, อักษรพ่นสี, อักษรโลหะ, อักษรสแตนเลส, อักษรสแตนเลสสีทอง, อักษรไฟสว่างหน้า ขอบซิงค์ / ขอบสแตนเลส, งานป้ายอื่น ๆ) เพิ่ม/แก้ไข/ปิดใช้งานได้ที่หน้าตั้งค่า, ตั้งให้บางประเภทต้องกรอกรายละเอียดงานได้ |
 | **รับงาน** | เลขที่งานอัตโนมัติแยกแต่ละร้าน (`J2610-0001`), ประเภทงาน วัสดุ ขนาด จำนวน ราคา มัดจำ กำหนดส่ง ความเร่งด่วน ผู้รับผิดชอบ |
@@ -55,6 +55,8 @@ npm run dev      # รันแบบ auto-reload ระหว่างพัฒ
 | `PG_POOL_MAX` | จำนวน connection สูงสุดต่อ instance (ค่าเริ่มต้น 3) |
 | `APP_SECRET` | กุญแจเข้ารหัส LINE token/secret ในฐานข้อมูล — **ควรตั้งบน Vercel** (สุ่มยาว ๆ เช่น `openssl rand -base64 32`) และห้ามเปลี่ยนหลังตั้งแล้ว |
 | `APP_URL` | (ไม่บังคับ) URL หลักของแอป ใช้ในลิงก์ข้อความ LINE / Webhook URL — ไม่ตั้งจะใช้โดเมนที่เปิดอยู่ |
+| `SMTP_HOST` `SMTP_PORT` `SMTP_USER` `SMTP_PASS` | เซิร์ฟเวอร์อีเมลสำหรับส่งลิงก์ลืมรหัสผ่าน (Gmail / Resend / อื่น ๆ) |
+| `MAIL_FROM` | (ไม่บังคับ) ชื่อ/อีเมลผู้ส่ง เช่น `MYD Easy <you@gmail.com>` |
 | `TEST_DATABASE_URL` | ใช้รันเทสต์กับ Postgres จริง (ต้องเป็นฐานข้อมูลว่าง) |
 
 ## Deploy: Supabase + Vercel
@@ -88,6 +90,14 @@ npm run dev      # รันแบบ auto-reload ระหว่างพัฒ
 
 > LINE Notify ปิดบริการแล้ว (31 มี.ค. 2025) จึงใช้ Messaging API แทน — LINE OA แพ็กเกจฟรีมีโควตาข้อความต่อเดือนจำกัด
 
+### อีเมลลืมรหัสผ่าน (ตั้งครั้งเดียวสำหรับทั้งระบบ)
+**ใช้ Gmail** (ง่ายสุด, ส่งได้ ~500 ฉบับ/วัน):
+1. เปิด [การยืนยันตัวตนแบบ 2 ขั้นตอน](https://myaccount.google.com/security) ของบัญชี Gmail
+2. สร้าง [App password](https://myaccount.google.com/apppasswords) (ได้รหัส 16 ตัว)
+3. ใน Vercel → Environment Variables เพิ่ม `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=465`, `SMTP_USER=อีเมล Gmail`, `SMTP_PASS=App password (ไม่มีเว้นวรรค)`, `MAIL_FROM=MYD Easy <อีเมล Gmail>` แล้ว Redeploy
+
+**ใช้ Resend** (เมื่อมีโดเมนของตัวเอง): `SMTP_HOST=smtp.resend.com`, `SMTP_PORT=465`, `SMTP_USER=resend`, `SMTP_PASS=API key`, `MAIL_FROM=MYD Easy <no-reply@โดเมนของคุณ>`
+
 ### ใส่ข้อมูลตัวอย่างบน Supabase (ไม่บังคับ)
 ```bash
 DATABASE_URL="postgresql://...:6543/postgres" npm run seed
@@ -110,6 +120,7 @@ src/
   server.js          รันบนเครื่องตัวเอง (npm start)
   app.js             ประกอบ Express app + error handler
   line.js / notify.js  เรียก LINE Messaging API / สร้างและส่งข้อความแจ้งเตือน
+  mail.js            ส่งอีเมลผ่าน SMTP
   secrets.js         เข้ารหัสค่าลับ (AES-256-GCM ด้วย APP_SECRET)
   db.js              เชื่อมฐานข้อมูล (pg สำหรับ Supabase / PGlite สำหรับเครื่องตัวเอง) + migration อัตโนมัติ
   schema.js          โครงสร้างตาราง (PostgreSQL)
@@ -136,6 +147,8 @@ vercel.json          ตั้งค่า Vercel (region, rewrites)
 |---|---|---|
 | POST | `/api/auth/register` | สมัครร้านใหม่ `{shop_name, name, email, password}` |
 | POST | `/api/auth/login` | เข้าสู่ระบบ → `{token}` |
+| POST | `/api/auth/forgot` | ขอลิงก์ตั้งรหัสผ่านใหม่ `{email}` |
+| POST | `/api/auth/reset` | ตั้งรหัสผ่านใหม่ `{token, password}` → `{token}` |
 | GET | `/api/auth/me` | ผู้ใช้ปัจจุบัน + ข้อมูลร้าน |
 | GET/POST | `/api/customers` | รายการ (`?q=`) / เพิ่มลูกค้า |
 | GET/PUT/DELETE | `/api/customers/:id` | ดู (พร้อมประวัติงาน) / แก้ไข / ลบ |

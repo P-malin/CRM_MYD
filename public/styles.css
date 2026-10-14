@@ -175,6 +175,7 @@ body:has(.auth) { background: radial-gradient(1200px 600px at 10% -10%, #dbeafe 
 .auth .form { grid-template-columns: 1fr; }
 .auth .btn.primary { background: linear-gradient(90deg, #3b82f6, #6d28d9); border: 0; padding: 11px 14px; font-weight: 600; box-shadow: 0 8px 18px -8px rgb(79 70 229 / .7); }
 .auth .btn.primary:hover { filter: brightness(1.06); }
+.sent-box { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 14px; color: #166534; }
 .brand-hero { text-align: center; margin-bottom: 22px; }
 .brand-hero img { display: block; margin: 0 auto 12px; border-radius: 18px; box-shadow: 0 14px 30px -10px rgb(79 70 229 / .55); }
 .brand-hero .wordmark { font-size: 34px; font-weight: 800; letter-spacing: .3px; color: #1e1b4b; line-height: 1.1; }

@@ -122,11 +122,7 @@ function renderAuth(mode) {
   const reg = mode === 'register';
   $app.innerHTML = `
     <div class="auth">
-      <div class="brand-hero">
-        <img src="/logo.svg" alt="" width="72" height="72">
-        <div class="wordmark">MYD <span>Easy</span></div>
-        <div class="tagline">ระบบจัดการงานร้านป้าย ง่าย ครบ จบในที่เดียว</div>
-      </div>
+      ${authHero}
       <div class="card">
         <h2>${reg ? 'สมัครใช้งานสำหรับร้านของคุณ' : 'เข้าสู่ระบบ'}</h2>
         <form class="form" id="auth-form">
@@ -136,6 +132,7 @@ function renderAuth(mode) {
           <div><label>อีเมล</label><input name="email" type="email" required autocomplete="username"></div>
           <div><label>รหัสผ่าน${reg ? ' (อย่างน้อย 8 ตัวอักษร)' : ''}</label>
             <input name="password" type="password" required minlength="${reg ? 8 : 1}" autocomplete="${reg ? 'new-password' : 'current-password'}"></div>
+          ${reg ? '' : '<div style="text-align:right;margin-top:-6px"><a href="#/forgot" style="font-size:14px">ลืมรหัสผ่าน?</a></div>'}
           <div class="error"></div>
           <button class="btn primary" type="submit">${reg ? 'สร้างร้านและเริ่มใช้งาน' : 'เข้าสู่ระบบ'}</button>
         </form>
@@ -155,6 +152,75 @@ function renderAuth(mode) {
       location.hash = '#/dashboard';
     } catch (ex) {
       form.querySelector('.error').textContent = ex.message;
+    }
+  });
+}
+
+const authHero = `<div class="brand-hero">
+  <img src="/logo.svg" alt="" width="72" height="72">
+  <div class="wordmark">MYD <span>Easy</span></div>
+  <div class="tagline">ระบบจัดการงานร้านป้าย ง่าย ครบ จบในที่เดียว</div>
+</div>`;
+
+// ลืมรหัสผ่าน: ขอลิงก์ทางอีเมล
+function renderForgot() {
+  $app.innerHTML = `<div class="auth">${authHero}
+    <div class="card">
+      <h2>ลืมรหัสผ่าน</h2>
+      <p class="muted" style="margin-top:-4px">กรอกอีเมลที่ใช้เข้าสู่ระบบ เราจะส่งลิงก์สำหรับตั้งรหัสผ่านใหม่ไปให้</p>
+      <form class="form" id="forgot-form">
+        <div><label>อีเมล</label><input name="email" type="email" required autocomplete="username"></div>
+        <div class="error"></div>
+        <button class="btn primary" type="submit">ส่งลิงก์ตั้งรหัสผ่านใหม่</button>
+      </form>
+      <p class="muted" style="text-align:center;margin-bottom:0"><a href="#/login">← กลับไปหน้าเข้าสู่ระบบ</a></p>
+    </div></div>`;
+  const form = document.getElementById('forgot-form');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = form.querySelector('button');
+    btn.disabled = true;
+    try {
+      const r = await api('POST', '/auth/forgot', formData(form));
+      form.outerHTML = `<div class="sent-box">📧 ${esc(r.message)}<div class="muted" style="margin-top:6px">ลิงก์ใช้ได้ภายใน 30 นาที</div></div>`;
+    } catch (ex) {
+      form.querySelector('.error').textContent = ex.message;
+      btn.disabled = false;
+    }
+  });
+}
+
+// ตั้งรหัสผ่านใหม่จากลิงก์ในอีเมล
+function renderReset(token) {
+  $app.innerHTML = `<div class="auth">${authHero}
+    <div class="card">
+      <h2>ตั้งรหัสผ่านใหม่</h2>
+      <form class="form" id="reset-form">
+        <div><label>รหัสผ่านใหม่ (อย่างน้อย 8 ตัวอักษร)</label><input name="password" type="password" required minlength="8" autocomplete="new-password"></div>
+        <div><label>ยืนยันรหัสผ่านใหม่</label><input name="confirm" type="password" required minlength="8" autocomplete="new-password"></div>
+        <div class="error"></div>
+        <button class="btn primary" type="submit">บันทึกรหัสผ่านใหม่</button>
+      </form>
+      <p class="muted" style="text-align:center;margin-bottom:0"><a href="#/forgot">ขอลิงก์ใหม่</a> · <a href="#/login">เข้าสู่ระบบ</a></p>
+    </div></div>`;
+  const form = document.getElementById('reset-form');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = formData(form);
+    const err = form.querySelector('.error');
+    if (f.password !== f.confirm) {
+      err.textContent = 'รหัสผ่านทั้งสองช่องไม่ตรงกัน';
+      return;
+    }
+    try {
+      const { token: session } = await api('POST', '/auth/reset', { token, password: f.password });
+      state.token = session;
+      state.me = null;
+      localStorage.setItem('token', session);
+      toast('ตั้งรหัสผ่านใหม่แล้ว');
+      location.hash = '#/dashboard';
+    } catch (ex) {
+      err.textContent = ex.message;
     }
   });
 }
@@ -1276,7 +1342,9 @@ async function route() {
   const parts = path.split('/').filter(Boolean);
   const seq = ++routeSeq;
   document.title = 'MYD Easy — ระบบจัดการงานร้านป้าย';
-  if (!state.token) return renderAuth(parts[0] === 'register' ? 'register' : 'login');
+  // หน้าตั้งรหัสผ่านใหม่เปิดได้ทั้งตอนล็อกอินอยู่หรือไม่
+  if (parts[0] === 'reset') return renderReset(params.get('token') || '');
+  if (!state.token) return parts[0] === 'forgot' ? renderForgot() : renderAuth(parts[0] === 'register' ? 'register' : 'login');
   try {
     if (!state.me) await loadSession();
     switch (parts[0]) {
