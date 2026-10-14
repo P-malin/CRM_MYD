@@ -816,7 +816,8 @@ async function viewQuotePrint(id, seq) {
         <div class="doc-shop">
           <div class="doc-shop-name">${esc(s.name)}</div>
           ${s.address ? `<div class="pre">${esc(s.address)}</div>` : ''}
-          ${s.phone || s.email ? `<div>${[s.phone && `โทร ${esc(s.phone)}`, s.email && esc(s.email)].filter(Boolean).join(' · ')}</div>` : ''}
+          ${s.phone ? `<div>โทร ${esc(s.phone)}</div>` : ''}
+          ${s.email ? `<div>อีเมล ${esc(s.email)}</div>` : ''}
           ${s.tax_id ? `<div>เลขประจำตัวผู้เสียภาษี ${esc(s.tax_id)}</div>` : ''}
         </div>
         <div class="doc-title">
