@@ -15,6 +15,7 @@ function lineWebhookRoutes(db) {
     if (!t || !t.line_secret) throw new HttpError(404, 'ไม่พบ webhook');
     if (!line.validSignature(openSecret(t.line_secret), req.rawBody, req.get('x-line-signature'))) throw new HttpError(401, 'ลายเซ็นไม่ถูกต้อง');
     const token = t.line_token && openSecret(t.line_token);
+    await db.run('UPDATE tenants SET line_last_webhook_at = now() WHERE id = ?', [t.id]);
 
     for (const ev of Array.isArray(req.body.events) ? req.body.events : []) {
       const groupId = ev.source?.type === 'group' ? ev.source.groupId : null;
@@ -48,7 +49,8 @@ function lineSettingsRoutes(db) {
 
   const settings = async (req) => {
     const t = await db.one(
-      'SELECT line_enabled, line_token, line_secret, line_bot_name, line_group_id, line_group_name, line_webhook_key FROM tenants WHERE id = ?',
+      `SELECT line_enabled, line_token, line_secret, line_bot_name, line_group_id, line_group_name, line_webhook_key, line_last_webhook_at
+       FROM tenants WHERE id = ?`,
       [req.user.tenant_id],
     );
     // ไม่ส่ง token/secret กลับไปที่หน้าเว็บ บอกแค่ว่าตั้งแล้วหรือยัง
@@ -59,6 +61,7 @@ function lineSettingsRoutes(db) {
       bot_name: t.line_bot_name,
       group_id: t.line_group_id,
       group_name: t.line_group_name,
+      last_webhook_at: t.line_last_webhook_at,
       webhook_url: t.line_webhook_key ? `${appUrl(req)}/api/line/webhook/${t.line_webhook_key}` : null,
     };
   };

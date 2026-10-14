@@ -695,14 +695,18 @@ function lineCardHtml(ln) {
           <div><label>Channel access token ${ln.has_token ? '<span class="ok-text">✓ ตั้งแล้ว</span>' : ''}</label><input name="token" autocomplete="off" placeholder="${ln.has_token ? 'ใส่ใหม่เฉพาะเมื่อต้องการเปลี่ยน' : ''}"></div>
           <div class="full form-actions" style="margin-top:0">${ln.bot_name ? `<span class="muted" style="margin-right:auto">เชื่อมกับบอท: <b>${esc(ln.bot_name)}</b></span>` : ''}<button class="btn primary">บันทึก</button></div>
         </form>`)}
-      ${step(3, Boolean(ln.group_id), `ใน LINE Developers → แท็บ Messaging API: วาง <b>Webhook URL</b> นี้ → กด Verify → เปิด <b>Use webhook</b> และเปิด <b>Allow bot to join group chats</b>
+      ${step(3, Boolean(ln.last_webhook_at), `ใน LINE Developers → แท็บ Messaging API: วาง <b>Webhook URL</b> นี้ → กด Verify → เปิด <b>Use webhook</b> และเปิด <b>Allow bot to join group chats</b>
         ${ln.webhook_url ? `<div class="copy-row"><input readonly value="${esc(ln.webhook_url)}" id="webhook-url"><button type="button" class="btn" id="copy-webhook">คัดลอก</button></div>`
           : '<div class="muted">(บันทึกขั้นที่ 2 ก่อน ระบบจะสร้าง Webhook URL ให้)</div>'}
+        ${ln.webhook_url ? (ln.last_webhook_at
+          ? `<div class="ok-text">✓ ได้รับสัญญาณจาก LINE แล้ว (ล่าสุด ${thDateTime(ln.last_webhook_at)})</div>`
+          : '<div class="overdue">ยังไม่เคยได้รับสัญญาณจาก LINE — วาง Webhook URL ใน LINE แล้วกด Verify จากนั้นกด <a href="#" data-line-refresh>รีเฟรช</a></div>') : ''}
         <div class="muted">แนะนำให้ปิด "ข้อความตอบกลับอัตโนมัติ" ใน LINE OA Manager</div>`)}
       ${step(4, Boolean(ln.group_id), ln.group_id
         ? `เชื่อมกับกลุ่ม: <b>${esc(ln.group_name || ln.group_id)}</b> <button type="button" class="btn small" id="line-unlink">ยกเลิกการเชื่อมกลุ่ม</button>`
-        : 'เชิญบอทของร้านเข้ากลุ่ม LINE ของทีม (หรือพิมพ์ข้อความใดก็ได้ในกลุ่มที่มีบอทอยู่แล้ว) แล้วกด <a href="#" id="line-refresh">รีเฟรช</a> — ระบบจะผูกกลุ่มให้อัตโนมัติ')}
-      ${step(5, ln.enabled && Boolean(ln.group_id), `<button type="button" class="btn" id="line-test" ${ln.group_id && ln.has_token ? '' : 'disabled'}>ส่งข้อความทดสอบ</button> แล้วเปิดสวิตช์ด้านบน`)}
+        : `เชิญบอท${ln.bot_name ? ` <b>${esc(ln.bot_name)}</b>` : 'ของร้าน'}เข้ากลุ่ม LINE ของทีม แล้วกด <a href="#" data-line-refresh>รีเฟรช</a> — ระบบจะผูกกลุ่มให้อัตโนมัติ
+          <div class="muted">ถ้าบอทอยู่ในกลุ่มก่อนตั้ง Webhook แล้ว ให้พิมพ์ข้อความอะไรก็ได้ในกลุ่ม แล้วกดรีเฟรช</div>`)}
+      ${step(5, ln.enabled && Boolean(ln.group_id), `<button type="button" class="btn" id="line-test" ${ln.has_token ? '' : 'disabled'}>ส่งข้อความทดสอบ</button> แล้วเปิดสวิตช์ด้านบน`)}
     </ol>
     ${ln.has_token || ln.has_secret ? '<div style="text-align:right"><button type="button" class="btn small danger" id="line-reset">ล้างการเชื่อมต่อ LINE</button></div>' : ''}
   </div>`;
@@ -748,7 +752,7 @@ function bindLineCard(main) {
     }
     toast('คัดลอก Webhook URL แล้ว');
   });
-  card.querySelector('#line-refresh')?.addEventListener('click', act(async () => {}));
+  card.querySelectorAll('[data-line-refresh]').forEach((a) => a.addEventListener('click', act(async () => {}, 'รีเฟรชแล้ว')));
   card.querySelector('#line-unlink')?.addEventListener('click', act(async () => {
     if (!confirm('ยกเลิกการเชื่อมกลุ่ม LINE นี้?')) return false;
     await api('DELETE', '/line/group');

@@ -84,7 +84,9 @@ test('แจ้งเตือน LINE เข้ากลุ่มทีม', as
   assert.equal((await call('POST', '/api/line/webhook/nope', { raw: joinBody, headers: { 'x-line-signature': sign('chan-secret', joinBody) } })).status, 404);
   // LINE กด Verify (events ว่าง) → 200
   const empty = JSON.stringify({ events: [] });
+  assert.equal((await call('GET', '/api/line/settings', { token })).data.last_webhook_at, null);
   assert.equal((await call('POST', path, { raw: empty, headers: { 'x-line-signature': sign('chan-secret', empty) } })).status, 200);
+  assert.ok((await call('GET', '/api/line/settings', { token })).data.last_webhook_at);
   // บอทเข้ากลุ่ม → ผูกกลุ่ม + ตอบกลับในกลุ่ม
   fake.calls = [];
   assert.equal((await call('POST', path, { raw: joinBody, headers: { 'x-line-signature': sign('chan-secret', joinBody) } })).status, 200);

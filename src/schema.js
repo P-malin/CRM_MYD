@@ -16,7 +16,7 @@ const legacyCase = (col) =>
   `CASE ${col} ${DEFAULT_JOB_STATUSES.filter((t) => t.legacy).map((t) => `WHEN ${sqlStr(t.legacy)} THEN ${sqlStr(t.name)}`).join(' ')} END`;
 
 // เพิ่มเลขนี้ทุกครั้งที่แก้ schema เพื่อให้ระบบรัน migration ใหม่
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 const TABLES = ['schema_version', 'tenants', 'users', 'sessions', 'customers', 'job_types', 'job_statuses', 'jobs', 'notification_logs', 'job_status_logs', 'payments'];
 
 const SCHEMA = `
@@ -225,6 +225,8 @@ ALTER TABLE tenants ADD COLUMN IF NOT EXISTS line_group_name text;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS line_webhook_key text;
 CREATE UNIQUE INDEX IF NOT EXISTS tenants_line_webhook_key ON tenants(line_webhook_key);
 ALTER TABLE job_statuses ADD COLUMN IF NOT EXISTS notify_line boolean NOT NULL DEFAULT true;
+-- v7: เวลาที่ได้รับ webhook จาก LINE ล่าสุด (ช่วยเช็กว่าตั้ง Webhook URL ถูก)
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS line_last_webhook_at timestamptz;
 
 -- ผูกงานเดิมที่ชื่อประเภทตรงกับ master
 UPDATE jobs j SET job_type_id = jt.id FROM job_types jt
