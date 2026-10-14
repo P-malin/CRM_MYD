@@ -22,6 +22,8 @@ const isOverdue = (j) => j.due_date && j.status_kind === 'open' && j.due_date < 
 const activeStatuses = () => state.jobStatuses.filter((x) => x.active);
 const dueHtml = (j) => (j.due_date ? `<span class="${isOverdue(j) ? 'overdue' : ''}">${thDate(j.due_date)}</span>` : '<span class="muted">-</span>');
 const prioTag = (p) => (p && p !== 'normal' ? `<span class="tag ${esc(p)}">${esc(label(state.meta.PRIORITIES, p))}</span>` : '');
+const notifyText = (msg, n) =>
+  n?.status === 'sent' ? `${msg} · แจ้ง LINE แล้ว` : n?.status === 'failed' ? `${msg} แต่ส่ง LINE ไม่สำเร็จ: ${n.error}` : msg;
 const mapsSearchUrl = (q) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
 const isAdmin = () => ['owner', 'admin'].includes(state.me?.user.role);
 const size = (j) => (j.width_cm || j.height_cm ? `${j.width_cm ?? '?'} × ${j.height_cm ?? '?'} ซม.` : '-');
@@ -159,7 +161,12 @@ const NAV = [
   ['reports', '📈 รายงาน'],
   ['settings', '⚙️ ตั้งค่า'],
 ];
-function shell(active, content) {
+// ป้องกันหน้าเก่าที่โหลดช้าวาดทับหน้าใหม่: ทุกครั้งที่เปลี่ยนหน้าจะได้เลข seq ใหม่
+let routeSeq = 0;
+class StaleRender extends Error {}
+
+function shell(seq, active, content) {
+  if (seq !== routeSeq) throw new StaleRender();
   $app.innerHTML = `
     <div class="shell">
       <nav class="side">
@@ -180,9 +187,9 @@ function shell(active, content) {
 }
 
 // ---------- dashboard ----------
-async function viewDashboard() {
+async function viewDashboard(seq) {
   const d = await api('GET', '/reports/dashboard');
-  const main = shell('dashboard', `
+  const main = shell(seq, 'dashboard', `
     <div class="page-head"><h1>แดชบอร์ด</h1><button class="btn primary" id="new-job">+ รับงานใหม่</button></div>
     <div class="grid kpi" style="margin-bottom:16px">
       <div class="kpi-card"><div class="label">งานที่กำลังดำเนินการ</div><div class="value">${d.open_jobs}</div></div>
@@ -233,10 +240,10 @@ function customerForm(c, after) {
   });
 }
 
-async function viewCustomers(params) {
+async function viewCustomers(params, seq) {
   const q = params.get('q') || '';
   const data = await api('GET', `/customers?limit=200&q=${encodeURIComponent(q)}`);
-  const main = shell('customers', `
+  const main = shell(seq, 'customers', `
     <div class="page-head"><h1>ลูกค้า <span class="muted">(${data.total})</span></h1><button class="btn primary" id="add">+ เพิ่มลูกค้า</button></div>
     <form class="toolbar" id="search"><input name="q" placeholder="ค้นหาชื่อ, บริษัท, เบอร์โทร, LINE" value="${esc(q)}" style="min-width:280px"><button class="btn">ค้นหา</button></form>
     <div class="card table-wrap">
@@ -254,11 +261,11 @@ async function viewCustomers(params) {
   });
 }
 
-async function viewCustomer(id) {
+async function viewCustomer(id, seq) {
   const c = await api('GET', `/customers/${id}`);
   const total = c.jobs.filter((j) => j.status_kind !== 'cancelled').reduce((s, j) => s + j.price, 0);
   const paid = c.jobs.filter((j) => j.status_kind !== 'cancelled').reduce((s, j) => s + j.paid, 0);
-  const main = shell('customers', `
+  const main = shell(seq, 'customers', `
     <div class="page-head">
       <h1><a href="#/customers" class="muted">ลูกค้า</a> / ${esc(c.name)}</h1>
       <div class="toolbar" style="margin:0">
@@ -350,7 +357,7 @@ async function jobForm(job = {}) {
       <div class="full form-actions"><button type="button" class="btn" data-close>ยกเลิก</button><button class="btn primary" type="submit">บันทึก</button></div>
     </form>`, async (data) => {
     const saved = await api(editing ? 'PUT' : 'POST', editing ? `/jobs/${job.id}` : '/jobs', data);
-    toast(editing ? 'บันทึกการแก้ไขแล้ว' : `รับงาน ${saved.job_no} แล้ว`);
+    toast(editing ? 'บันทึกการแก้ไขแล้ว' : notifyText(`รับงาน ${saved.job_no} แล้ว`, saved.notification), saved.notification?.status === 'failed');
     if (location.hash === `#/jobs/${saved.id}`) route();
     else location.hash = `#/jobs/${saved.id}`;
   });
@@ -380,7 +387,7 @@ async function jobForm(job = {}) {
   syncDelivery();
 }
 
-async function viewJobs(params) {
+async function viewJobs(params, seq) {
   const mode = params.get('view') || localStorage.getItem('jobsView') || 'board';
   localStorage.setItem('jobsView', mode);
   const q = params.get('q') || '';
@@ -419,7 +426,7 @@ async function viewJobs(params) {
       </div>`).join('')}</div>`;
   }).join('')}</div>`;
 
-  const main = shell('jobs', `
+  const main = shell(seq, 'jobs', `
     <div class="page-head"><h1>งาน <span class="muted">(${data.total})</span></h1><button class="btn primary" id="new-job">+ รับงานใหม่</button></div>
     <form class="toolbar" id="filters">
       <input name="q" placeholder="ค้นหาเลขที่, ชื่องาน, ลูกค้า" value="${esc(q)}">
@@ -459,12 +466,12 @@ function nextStatusId(currentId) {
   return next ? next.id : '';
 }
 
-async function viewJob(id) {
+async function viewJob(id, seq) {
   const j = await api('GET', `/jobs/${id}`);
   const M = state.meta;
   const remaining = j.price - j.paid;
   const pct = j.price > 0 ? Math.min(100, Math.round((j.paid / j.price) * 100)) : 0;
-  const main = shell('jobs', `
+  const main = shell(seq, 'jobs', `
     <div class="page-head">
       <h1><a href="#/jobs" class="muted">งาน</a> / ${esc(j.job_no)} ${jobBadge(j)}</h1>
       <div class="toolbar" style="margin:0">
@@ -512,6 +519,10 @@ async function viewJob(id) {
         </div>
       </div>
     </div>
+    ${j.notifications?.length ? `<div class="card"><h2>การแจ้งเตือน LINE</h2><table>
+      ${j.notifications.map((n) => `<tr><td class="nowrap">${thDateTime(n.created_at)}</td>
+        <td>${n.status === 'sent' ? '<span class="ok-text">✓ ส่งเข้ากลุ่มแล้ว</span>' : `<span class="overdue">✗ ส่งไม่สำเร็จ</span> <span class="muted">${esc(n.error || '')}</span>`}</td></tr>`).join('')}
+    </table></div>` : ''}
     <div class="card"><h2>ประวัติสถานะ</h2><ul class="timeline">
       ${j.logs.map((l) => `<li>${l.from_status_id ? `${badge(l.from_name, l.from_color)} → ` : ''}${badge(l.to_name, l.to_color)}
         <span class="muted"> · ${thDateTime(l.created_at)} · ${esc(l.user_name || '-')}</span>${l.note ? `<div>${esc(l.note)}</div>` : ''}</li>`).join('')}
@@ -530,8 +541,8 @@ async function viewJob(id) {
     const target = state.jobStatuses.find((y) => y.id === Number(statusForm.status_id.value));
     if (target?.kind === 'done' && remaining > 0 && !confirm(`งานนี้ยังค้างชำระ ${baht(remaining)} ต้องการปิดงานใช่ไหม?`)) return;
     try {
-      await api('POST', `/jobs/${j.id}/status`, formData(e.target));
-      toast('อัปเดตสถานะแล้ว');
+      const r = await api('POST', `/jobs/${j.id}/status`, formData(e.target));
+      toast(notifyText('อัปเดตสถานะแล้ว', r.notification), r.notification?.status === 'failed');
       route();
     } catch (ex) {
       toast(ex.message, true);
@@ -576,7 +587,7 @@ function monthRange(offset) {
   return [f(first), offset === 0 ? todayStr() : f(last)];
 }
 
-async function viewReports(params) {
+async function viewReports(params, seq) {
   const [defFrom, defTo] = monthRange(0);
   const from = params.get('from') || defFrom;
   const to = params.get('to') || defTo;
@@ -587,7 +598,7 @@ async function viewReports(params) {
   const thMonth = (m) => new Date(`${m}-01T00:00:00`).toLocaleDateString('th-TH', { month: 'short', year: '2-digit' });
   const y = new Date().getFullYear();
 
-  const main = shell('reports', `
+  const main = shell(seq, 'reports', `
     <div class="page-head"><h1>รายงาน</h1></div>
     <form class="toolbar" id="range">
       <label style="margin:0">ตั้งแต่</label><input type="date" name="from" value="${from}">
@@ -667,6 +678,79 @@ function jobTypeFormHtml(t = {}) {
   </form>`;
 }
 
+// ---------- LINE notification settings ----------
+function lineCardHtml(ln) {
+  const step = (n, done, html) => `<li class="${done ? 'done' : ''}"><span class="step-no">${done ? '✓' : n}</span><div>${html}</div></li>`;
+  return `<div class="card" id="line-card">
+    <div class="page-head"><h2 style="margin:0">💬 แจ้งเตือน LINE เข้ากลุ่มทีม</h2>
+      <label class="switch"><input type="checkbox" id="line-enabled" ${ln.enabled ? 'checked' : ''}><span></span> ${ln.enabled ? 'เปิดอยู่' : 'ปิดอยู่'}</label></div>
+    <p class="muted" style="margin-top:0">ส่งข้อความเข้ากลุ่ม LINE ของร้านเมื่อมีงานใหม่และเมื่อเปลี่ยนสถานะงาน (เลือกสถานะที่ต้องการแจ้งได้ในตาราง "สถานะงาน" ด้านล่าง)</p>
+    <ol class="steps">
+      ${step(1, ln.has_token && ln.has_secret, `สร้าง LINE Official Account ของร้าน แล้วเปิดใช้ <b>Messaging API</b> ที่
+        <a href="https://manager.line.biz" target="_blank" rel="noopener">LINE Official Account Manager</a> → ตั้งค่า → Messaging API
+        <div class="muted">จากนั้นเข้า <a href="https://developers.line.biz/console/" target="_blank" rel="noopener">LINE Developers Console</a> → เลือก channel ของร้าน</div>`)}
+      ${step(2, ln.has_token && ln.has_secret, `คัดลอก <b>Channel secret</b> (แท็บ Basic settings) และ <b>Channel access token</b> (แท็บ Messaging API → Issue) มาวางที่นี่
+        <form id="line-form" class="form" style="margin-top:8px">
+          <div><label>Channel secret ${ln.has_secret ? '<span class="ok-text">✓ ตั้งแล้ว</span>' : ''}</label><input name="secret" autocomplete="off" placeholder="${ln.has_secret ? 'ใส่ใหม่เฉพาะเมื่อต้องการเปลี่ยน' : ''}"></div>
+          <div><label>Channel access token ${ln.has_token ? '<span class="ok-text">✓ ตั้งแล้ว</span>' : ''}</label><input name="token" autocomplete="off" placeholder="${ln.has_token ? 'ใส่ใหม่เฉพาะเมื่อต้องการเปลี่ยน' : ''}"></div>
+          <div class="full form-actions" style="margin-top:0">${ln.bot_name ? `<span class="muted" style="margin-right:auto">เชื่อมกับบอท: <b>${esc(ln.bot_name)}</b></span>` : ''}<button class="btn primary">บันทึก</button></div>
+        </form>`)}
+      ${step(3, Boolean(ln.group_id), `ใน LINE Developers → แท็บ Messaging API: วาง <b>Webhook URL</b> นี้ → กด Verify → เปิด <b>Use webhook</b> และเปิด <b>Allow bot to join group chats</b>
+        ${ln.webhook_url ? `<div class="copy-row"><input readonly value="${esc(ln.webhook_url)}" id="webhook-url"><button type="button" class="btn" id="copy-webhook">คัดลอก</button></div>`
+          : '<div class="muted">(บันทึกขั้นที่ 2 ก่อน ระบบจะสร้าง Webhook URL ให้)</div>'}
+        <div class="muted">แนะนำให้ปิด "ข้อความตอบกลับอัตโนมัติ" ใน LINE OA Manager</div>`)}
+      ${step(4, Boolean(ln.group_id), ln.group_id
+        ? `เชื่อมกับกลุ่ม: <b>${esc(ln.group_name || ln.group_id)}</b> <button type="button" class="btn small" id="line-unlink">ยกเลิกการเชื่อมกลุ่ม</button>`
+        : 'เชิญบอทของร้านเข้ากลุ่ม LINE ของทีม (หรือพิมพ์ข้อความใดก็ได้ในกลุ่มที่มีบอทอยู่แล้ว) แล้วกด <a href="#" id="line-refresh">รีเฟรช</a> — ระบบจะผูกกลุ่มให้อัตโนมัติ')}
+      ${step(5, ln.enabled && Boolean(ln.group_id), `<button type="button" class="btn" id="line-test" ${ln.group_id && ln.has_token ? '' : 'disabled'}>ส่งข้อความทดสอบ</button> แล้วเปิดสวิตช์ด้านบน`)}
+    </ol>
+    ${ln.has_token || ln.has_secret ? '<div style="text-align:right"><button type="button" class="btn small danger" id="line-reset">ล้างการเชื่อมต่อ LINE</button></div>' : ''}
+  </div>`;
+}
+
+function bindLineCard(main) {
+  const card = main.querySelector('#line-card');
+  if (!card) return;
+  const act = (fn, okMsg) => async (e) => {
+    e?.preventDefault();
+    try {
+      if ((await fn()) === false) return; // ผู้ใช้กดยกเลิก
+      if (okMsg) toast(okMsg);
+      route();
+    } catch (ex) {
+      toast(ex.message, true);
+    }
+  };
+  card.querySelector('#line-form').addEventListener('submit', act(async () => {
+    const f = formData(card.querySelector('#line-form'));
+    if (!f.token && !f.secret) throw new Error('กรอก Channel secret หรือ Channel access token');
+    await api('PUT', '/line/settings', f);
+  }, 'บันทึกการตั้งค่า LINE แล้ว'));
+  card.querySelector('#line-enabled').addEventListener('change', act(async () => {
+    await api('PUT', '/line/settings', { enabled: card.querySelector('#line-enabled').checked });
+  }));
+  card.querySelector('#copy-webhook')?.addEventListener('click', async () => {
+    const input = card.querySelector('#webhook-url');
+    try {
+      await navigator.clipboard.writeText(input.value);
+    } catch {
+      input.select();
+      document.execCommand('copy');
+    }
+    toast('คัดลอก Webhook URL แล้ว');
+  });
+  card.querySelector('#line-refresh')?.addEventListener('click', act(async () => {}));
+  card.querySelector('#line-unlink')?.addEventListener('click', act(async () => {
+    if (!confirm('ยกเลิกการเชื่อมกลุ่ม LINE นี้?')) return false;
+    await api('DELETE', '/line/group');
+  }, 'ยกเลิกการเชื่อมกลุ่มแล้ว'));
+  card.querySelector('#line-test').addEventListener('click', act(async () => api('POST', '/line/test'), 'ส่งข้อความทดสอบแล้ว — ตรวจดูในกลุ่ม LINE'));
+  card.querySelector('#line-reset')?.addEventListener('click', act(async () => {
+    if (!confirm('ล้าง token, secret และการเชื่อมกลุ่มทั้งหมด?')) return false;
+    await api('DELETE', '/line/settings');
+  }, 'ล้างการเชื่อมต่อ LINE แล้ว'));
+}
+
 function jobStatusFormHtml(x = {}) {
   return `<form class="form">
     <div><label>ชื่อสถานะ *</label><input name="name" required value="${esc(x.name)}"></div>
@@ -681,13 +765,14 @@ function jobStatusFormHtml(x = {}) {
   </form>`;
 }
 
-async function viewSettings() {
+async function viewSettings(seq) {
   state.users = await api('GET', '/users');
   state.jobTypes = await api('GET', '/job-types?all=1');
   state.jobStatuses = await api('GET', '/job-statuses?all=1');
   const t = state.me.tenant;
   const admin = isAdmin();
-  const main = shell('settings', `
+  const ln = admin ? await api('GET', '/line/settings') : null;
+  const main = shell(seq, 'settings', `
     <div class="page-head"><h1>ตั้งค่า</h1></div>
     <div class="grid two">
       <div class="card"><h2>ข้อมูลร้าน</h2>
@@ -708,13 +793,15 @@ async function viewSettings() {
         </form>
       </div>
     </div>
+    ${ln ? lineCardHtml(ln) : ''}
     <div class="card table-wrap">
       <div class="page-head"><h2 style="margin:0">สถานะงาน</h2>${admin ? '<button class="btn primary" id="add-status">+ เพิ่มสถานะ</button>' : ''}</div>
-      <table><tr><th>ลำดับ</th><th>สถานะ</th><th>ความหมาย</th><th>ประเภท</th><th class="right">งานปัจจุบัน</th><th>ใช้งาน</th>${admin ? '<th></th>' : ''}</tr>
+      <table><tr><th>ลำดับ</th><th>สถานะ</th><th>ความหมาย</th><th>ประเภท</th><th class="right">งานปัจจุบัน</th><th>ใช้งาน</th><th title="ส่งแจ้งเตือนเข้ากลุ่ม LINE เมื่อเปลี่ยนเป็นสถานะนี้">แจ้ง LINE</th>${admin ? '<th></th>' : ''}</tr>
         ${state.jobStatuses.map((x, i, all) => `<tr>
           <td class="nowrap">${i + 1}${admin ? ` <button class="icon-btn" data-move="${x.id}" data-dir="-1" title="เลื่อนขึ้น" ${i === 0 ? 'disabled' : ''}>▲</button><button class="icon-btn" data-move="${x.id}" data-dir="1" title="เลื่อนลง" ${i === all.length - 1 ? 'disabled' : ''}>▼</button>` : ''}</td>
           <td>${badge(x.name, x.color)}</td><td>${esc(x.description || '-')}</td><td class="nowrap">${esc(label(state.meta.STATUS_KINDS, x.kind))}</td>
           <td class="right">${x.job_count}</td><td>${x.active ? 'ใช้งาน' : '<span class="muted">ปิดใช้งาน</span>'}</td>
+          <td><input type="checkbox" data-notify="${x.id}" ${x.notify_line ? 'checked' : ''} ${admin ? '' : 'disabled'} style="width:auto"></td>
           ${admin ? `<td class="nowrap"><button class="btn small" data-edit-status="${x.id}">แก้ไข</button>
             ${x.job_count ? '' : `<button class="btn small danger" data-del-status="${x.id}">ลบ</button>`}</td>` : ''}</tr>`).join('')}
       </table>
@@ -738,6 +825,18 @@ async function viewSettings() {
       </table>
     </div>`);
 
+  bindLineCard(main);
+  main.querySelectorAll('[data-notify]').forEach((cb) =>
+    cb.addEventListener('change', async () => {
+      try {
+        await api('PUT', `/job-statuses/${cb.dataset.notify}`, { notify_line: cb.checked });
+        toast(cb.checked ? 'เปิดแจ้ง LINE สำหรับสถานะนี้แล้ว' : 'ปิดแจ้ง LINE สำหรับสถานะนี้แล้ว');
+      } catch (ex) {
+        cb.checked = !cb.checked;
+        toast(ex.message, true);
+      }
+    }),
+  );
   main.querySelector('#add-status')?.addEventListener('click', () =>
     openModal('เพิ่มสถานะงาน', jobStatusFormHtml(), async (data) => {
       await api('POST', '/job-statuses', data);
@@ -873,26 +972,28 @@ async function route() {
   const [path, query = ''] = location.hash.slice(1).split('?');
   const params = new URLSearchParams(query);
   const parts = path.split('/').filter(Boolean);
+  const seq = ++routeSeq;
   if (!state.token) return renderAuth(parts[0] === 'register' ? 'register' : 'login');
   try {
     if (!state.me) await loadSession();
     switch (parts[0]) {
       case 'jobs':
-        return parts[1] ? await viewJob(parts[1]) : await viewJobs(params);
+        return parts[1] ? await viewJob(parts[1], seq) : await viewJobs(params, seq);
       case 'customers':
-        return parts[1] ? await viewCustomer(parts[1]) : await viewCustomers(params);
+        return parts[1] ? await viewCustomer(parts[1], seq) : await viewCustomers(params, seq);
       case 'reports':
-        return await viewReports(params);
+        return await viewReports(params, seq);
       case 'settings':
-        return await viewSettings();
+        return await viewSettings(seq);
       case 'dashboard':
-        return await viewDashboard();
+        return await viewDashboard(seq);
       default:
         location.hash = '#/dashboard';
     }
   } catch (ex) {
+    if (ex instanceof StaleRender || seq !== routeSeq) return; // ผู้ใช้ไปหน้าอื่นแล้ว
     toast(ex.message, true);
-    if (state.me) shell(parts[0], `<div class="card"><p>${esc(ex.message)}</p><a href="#/dashboard">กลับหน้าแดชบอร์ด</a></div>`);
+    if (state.me) shell(seq, parts[0], `<div class="card"><p>${esc(ex.message)}</p><a href="#/dashboard">กลับหน้าแดชบอร์ด</a></div>`);
   }
 }
 

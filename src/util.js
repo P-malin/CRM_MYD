@@ -63,6 +63,11 @@ function mapsUrl(v) {
   return url.href;
 }
 
+// URL ของแอป (ใช้สร้างลิงก์ในข้อความแจ้งเตือน / webhook) — ตั้ง APP_URL เพื่อกำหนดเองได้
+function appUrl(req) {
+  return (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+}
+
 function intId(v) {
   const n = Number(v);
   if (!Number.isInteger(n) || n <= 0) throw new HttpError(404, 'ไม่พบข้อมูล');
@@ -80,4 +85,4 @@ function pagination(query) {
   return { limit, offset };
 }
 
-module.exports = { HttpError, str, requireStr, num, oneOf, date, mapsUrl, intId, today, pagination };
+module.exports = { HttpError, str, requireStr, num, oneOf, date, mapsUrl, appUrl, intId, today, pagination };

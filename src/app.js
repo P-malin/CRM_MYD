@@ -6,7 +6,9 @@ const constants = require('./constants');
 function createApp(db) {
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '1mb' }));
+  app.set('trust proxy', true); // อยู่หลัง proxy ของ Vercel: ใช้ https จาก x-forwarded-proto
+  // เก็บ raw body ไว้ตรวจลายเซ็น webhook ของ LINE
+  app.use(express.json({ limit: '1mb', verify: (req, res, buf) => (req.rawBody = buf) }));
   app.use((req, res, next) => {
     req.body ??= {};
     next();
@@ -21,11 +23,14 @@ function createApp(db) {
   const api = express.Router();
   api.get('/meta', (req, res) => res.json(constants));
   api.use(require('./routes/auth')(db));
+  const { lineWebhookRoutes, lineSettingsRoutes } = require('./routes/line');
+  api.use(lineWebhookRoutes(db));
   api.use(requireAuth(db));
   api.use(require('./routes/users')(db));
   api.use(require('./routes/customers')(db));
   api.use(require('./routes/jobTypes')(db));
   api.use(require('./routes/jobStatuses')(db));
+  api.use(lineSettingsRoutes(db));
   api.use(require('./routes/jobs')(db));
   api.use(require('./routes/reports')(db));
   api.use((req, res) => res.status(404).json({ error: 'ไม่พบ API นี้' }));

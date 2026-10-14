@@ -1,6 +1,7 @@
 const express = require('express');
 const { requireRole } = require('../auth');
-const { HttpError, str, requireStr, num, oneOf, date, mapsUrl, intId, today, pagination } = require('../util');
+const { HttpError, str, requireStr, num, oneOf, date, mapsUrl, appUrl, intId, today, pagination } = require('../util');
+const { notifyStatus } = require('../notify');
 const { ACTIVE_KINDS, PRIORITIES, PAYMENT_KINDS, PAYMENT_METHODS, DELIVERY_METHODS } = require('../constants');
 
 const PRIORITY_KEYS = PRIORITIES.map((p) => p.key);
@@ -150,6 +151,11 @@ module.exports = function jobRoutes(db) {
        WHERE p.job_id = ? AND p.tenant_id = ? ORDER BY p.paid_at, p.id`,
       [job.id, t],
     );
+    job.notifications = await db.query(
+      `SELECT id, channel, status, error, created_at FROM notification_logs
+       WHERE job_id = ? AND tenant_id = ? ORDER BY id DESC LIMIT 20`,
+      [job.id, t],
+    );
     res.json(job);
   });
 
@@ -179,6 +185,10 @@ module.exports = function jobRoutes(db) {
         ]);
       }
       return getJob(t, id, tx);
+    });
+    // แจ้งเตือนหลังบันทึกสำเร็จแล้ว — ส่งไม่สำเร็จก็ไม่กระทบงาน
+    job.notification = await notifyStatus(db, {
+      tenantId: t, job, fromStatusId: null, toStatusId: job.status_id, userName: req.user.name, appUrl: appUrl(req),
     });
     res.status(201).json(job);
   });
@@ -213,6 +223,9 @@ module.exports = function jobRoutes(db) {
         t, job.id, job.status_id, next.id, str(req.body.note), req.user.id,
       ]);
       return getJob(t, job.id, tx);
+    });
+    updated.notification = await notifyStatus(db, {
+      tenantId: t, job: updated, fromStatusId: job.status_id, toStatusId: next.id, note: str(req.body.note), userName: req.user.name, appUrl: appUrl(req),
     });
     res.json(updated);
   });

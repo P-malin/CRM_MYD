@@ -5,7 +5,7 @@ const { STATUS_KINDS } = require('../constants');
 
 const KIND_KEYS = STATUS_KINDS.map((k) => k.key);
 const COLOR_RE = /^#[0-9a-f]{6}$/i; // สีถูกนำไปใส่ใน style จึงต้องตรวจเข้ม
-const COLS = `s.id, s.name, s.description, s.color, s.kind, s.sort_order, s.active,
+const COLS = `s.id, s.name, s.description, s.color, s.kind, s.sort_order, s.active, s.notify_line,
   (SELECT COUNT(*) FROM jobs j WHERE j.status_id = s.id) AS job_count`;
 
 function color(v, def) {
@@ -40,9 +40,10 @@ module.exports = function jobStatusRoutes(db) {
     const name = requireStr(req.body.name, 'ชื่อสถานะ');
     await ensureUniqueName(t, name);
     const { id } = await db.one(
-      `INSERT INTO job_statuses (tenant_id, name, description, color, kind, sort_order)
-       VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM job_statuses WHERE tenant_id = ?)) RETURNING id`,
-      [t, name, str(req.body.description), color(req.body.color, '#64748b'), oneOf(req.body.kind, KIND_KEYS, 'ประเภทสถานะ', 'open'), t],
+      `INSERT INTO job_statuses (tenant_id, name, description, color, kind, notify_line, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM job_statuses WHERE tenant_id = ?)) RETURNING id`,
+      [t, name, str(req.body.description), color(req.body.color, '#64748b'), oneOf(req.body.kind, KIND_KEYS, 'ประเภทสถานะ', 'open'),
+        req.body.notify_line === undefined ? true : Boolean(req.body.notify_line), t],
     );
     res.status(201).json(await getStatus(t, id));
   });
@@ -71,6 +72,7 @@ module.exports = function jobStatusRoutes(db) {
       color: color(b.color, cur.color),
       kind: oneOf(b.kind, KIND_KEYS, 'ประเภทสถานะ', cur.kind),
       active: b.active === undefined ? cur.active : Boolean(b.active),
+      notify_line: b.notify_line === undefined ? cur.notify_line : Boolean(b.notify_line),
     };
     await ensureUniqueName(t, next.name, cur.id);
     // ต้องเหลือสถานะ "ระหว่างดำเนินการ" ที่เปิดใช้งานอย่างน้อย 1 สถานะ (ใช้เป็นสถานะเริ่มต้นของงานใหม่)
@@ -78,8 +80,8 @@ module.exports = function jobStatusRoutes(db) {
       const { n } = await db.one("SELECT COUNT(*) n FROM job_statuses WHERE tenant_id = ? AND kind = 'open' AND active AND id != ?", [t, cur.id]);
       if (!n) throw new HttpError(400, 'ต้องมีสถานะประเภท "ระหว่างดำเนินการ" ที่เปิดใช้งานอย่างน้อย 1 สถานะ');
     }
-    await db.run('UPDATE job_statuses SET name = ?, description = ?, color = ?, kind = ?, active = ? WHERE id = ?', [
-      next.name, next.description, next.color, next.kind, next.active, cur.id,
+    await db.run('UPDATE job_statuses SET name = ?, description = ?, color = ?, kind = ?, active = ?, notify_line = ? WHERE id = ?', [
+      next.name, next.description, next.color, next.kind, next.active, next.notify_line, cur.id,
     ]);
     res.json(await getStatus(t, cur.id));
   });

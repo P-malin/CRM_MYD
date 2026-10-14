@@ -97,6 +97,23 @@ dl.info dt { color: var(--muted); } dl.info dd { margin: 0; white-space: pre-wra
 .progress { height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden; margin: 8px 0; }
 .progress > span { display: block; height: 100%; background: var(--ok); }
 
+/* LINE settings */
+.steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
+.steps li { display: flex; gap: 12px; align-items: flex-start; }
+.steps li > div { flex: 1; min-width: 0; }
+.step-no { flex: none; width: 26px; height: 26px; border-radius: 50%; background: #e0e7ff; color: var(--primary); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.done .step-no { background: var(--ok); color: #fff; }
+.ok-text { color: var(--ok); font-weight: 600; }
+.copy-row { display: flex; gap: 8px; margin: 6px 0; }
+.copy-row .btn { white-space: nowrap; flex: none; }
+.copy-row input { font-family: ui-monospace, monospace; font-size: 13px; background: #f8fafc; }
+.switch { display: inline-flex; align-items: center; gap: 8px; margin: 0; color: var(--text); font-size: 14px; cursor: pointer; }
+.switch input { display: none; }
+.switch span { width: 40px; height: 22px; border-radius: 11px; background: #cbd5e1; position: relative; transition: background .15s; }
+.switch span::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .15s; }
+.switch input:checked + span { background: #06c755; }
+.switch input:checked + span::after { left: 21px; }
+
 /* chart */
 .bars { display: flex; align-items: flex-end; gap: 10px; height: 200px; padding-top: 10px; overflow-x: auto; }
 .bar-group { display: flex; flex-direction: column; align-items: center; min-width: 46px; flex: 1; height: 100%; }
