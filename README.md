@@ -32,6 +32,23 @@ npm test         # ทดสอบ API รวมถึงการแยกข�
 npm run dev      # รันแบบ auto-reload ระหว่างพัฒนา
 ```
 
+## Deploy ขึ้น Railway
+
+โปรเจคมี `Dockerfile` และ `railway.json` เตรียมไว้แล้ว (build ด้วย Docker, มี healthcheck ที่ `/healthz`)
+
+1. สมัคร/เข้าสู่ระบบที่ https://railway.com แล้วกด **New Project → Deploy from GitHub repo** เลือก repo นี้
+2. ไปที่ service → **Settings → Source** เลือก branch ที่ต้องการ deploy
+3. **สำคัญ: เพิ่ม Volume เพื่อไม่ให้ข้อมูลหาย** — คลิกขวาที่ service → **Attach Volume** ตั้ง Mount path เป็น `/data`
+   (ถ้าไม่มี Volume ข้อมูลทั้งหมดจะหายทุกครั้งที่ deploy ใหม่)
+4. **Settings → Networking → Generate Domain** เพื่อรับ URL สาธารณะ (เช่น `https://crm-myd-production.up.railway.app`)
+5. รอ deploy เสร็จ แล้วเปิด URL นั้น → สมัครร้านแรกได้เลย
+
+ไม่ต้องตั้งตัวแปรเพิ่ม: Railway ส่ง `PORT` มาให้เอง และ `DB_FILE` ตั้งไว้เป็น `/data/crm.db` ใน Dockerfile แล้ว
+
+ถ้าต้องการข้อมูลตัวอย่างบนเซิร์ฟเวอร์ (ไม่แนะนำบนระบบจริง) ใช้ Railway CLI: `railway ssh` แล้วรัน `node scripts/seed.js`
+
+**สำรองข้อมูล:** ข้อมูลทั้งหมดอยู่ในไฟล์ `/data/crm.db` ไฟล์เดียว — เปิด Volume Backups ในหน้า Volume ของ Railway เพื่อสำรองอัตโนมัติ
+
 ## โครงสร้างโปรเจค
 
 ```
@@ -44,6 +61,8 @@ src/
   routes/            auth, users, customers, jobs, reports
 public/              หน้าเว็บ (HTML/CSS/JS ล้วน ไม่ต้อง build)
 scripts/seed.js      ข้อมูลตัวอย่าง
+Dockerfile           สำหรับ deploy (Railway หรือที่อื่นที่รองรับ Docker)
+railway.json         ตั้งค่า build/healthcheck ของ Railway
 test/                ทดสอบ API (node:test)
 ```
 

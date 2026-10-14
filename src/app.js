@@ -12,6 +12,12 @@ function createApp(db) {
     next();
   });
 
+  // ใช้ตรวจสุขภาพระบบ (Railway healthcheck)
+  app.get('/healthz', (req, res) => {
+    db.prepare('SELECT 1').get();
+    res.json({ ok: true });
+  });
+
   const api = express.Router();
   api.get('/meta', (req, res) => res.json(constants));
   api.use(require('./routes/auth')(db));
