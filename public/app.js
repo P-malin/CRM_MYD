@@ -334,8 +334,9 @@ async function jobForm(job = {}) {
       <div><label>ความเร่งด่วน</label><select name="priority">${options(state.meta.PRIORITIES, job.priority || 'normal')}</select></div>
       <div class="full"><label>ผู้รับผิดชอบ</label><select name="assigned_to">${options(users.map((u) => ({ key: u.id, label: u.name })), job.assigned_to, { empty: '-- ยังไม่มอบหมาย --' })}</select></div>
       <div class="full"><label id="desc-label">รายละเอียดงาน</label><textarea name="description">${v('description')}</textarea></div>
-      <div class="full check"><input type="checkbox" name="install_required" id="inst" ${job.install_required ? 'checked' : ''}><label for="inst" style="margin:0">ต้องติดตั้งหน้างาน</label></div>
-      <div class="full"><label>สถานที่ติดตั้ง</label><textarea name="install_address">${v('install_address')}</textarea></div>
+      <div class="full"><label>วิธีส่งมอบ *</label><select name="delivery_method" ${editing && !job.delivery_method ? '' : 'required'}>
+        ${options(state.meta.DELIVERY_METHODS, job.delivery_method, { empty: '-- เลือกวิธีส่งมอบ --' })}</select></div>
+      <div class="full" id="addr-row"><label id="addr-label">ที่อยู่จัดส่ง/ติดตั้ง</label><textarea name="install_address" placeholder="ที่อยู่ / จุดสังเกต / ผู้ติดต่อหน้างาน">${v('install_address')}</textarea></div>
       <div class="full error"></div>
       <div class="full form-actions"><button type="button" class="btn" data-close>ยกเลิก</button><button class="btn primary" type="submit">บันทึก</button></div>
     </form>`, async (data) => {
@@ -354,6 +355,15 @@ async function jobForm(job = {}) {
   };
   form.job_type_id.addEventListener('change', syncType);
   syncType();
+  // ร้านจัดส่ง / ร้านเข้าติดตั้ง ต้องกรอกที่อยู่; ลูกค้ารับเองไม่ต้อง
+  const syncDelivery = () => {
+    const m = state.meta.DELIVERY_METHODS.find((x) => x.key === form.delivery_method.value);
+    form.install_address.required = Boolean(m?.needs_address);
+    form.querySelector('#addr-label').textContent = m?.needs_address ? 'ที่อยู่จัดส่ง/ติดตั้ง *' : 'ที่อยู่จัดส่ง/ติดตั้ง';
+    form.querySelector('#addr-row').classList.toggle('hidden', Boolean(m && !m.needs_address) && !form.install_address.value);
+  };
+  form.delivery_method.addEventListener('change', syncDelivery);
+  syncDelivery();
 }
 
 async function viewJobs(params) {
@@ -364,17 +374,18 @@ async function viewJobs(params) {
   const overdue = params.get('overdue') === '1';
   const assigned = params.get('assigned_to') || '';
   const jobType = params.get('job_type_id') || '';
-  const qs = new URLSearchParams({ limit: '200', q, status, assigned_to: assigned, job_type_id: jobType, ...(overdue ? { overdue: '1' } : {}) });
+  const delivery = params.get('delivery_method') || '';
+  const qs = new URLSearchParams({ limit: '200', q, status, assigned_to: assigned, job_type_id: jobType, delivery_method: delivery, ...(overdue ? { overdue: '1' } : {}) });
   // มุมมองบอร์ด: ซ่อนงานที่เสร็จ/ยกเลิกเว้นแต่กรองสถานะเอง
   if (mode === 'board' && !status) qs.set('open', '1');
   const data = await api('GET', `/jobs?${qs}`);
   const S = state.meta.JOB_STATUSES;
 
   const table = `<div class="card table-wrap">${data.rows.length ? `<table>
-    <tr><th>เลขที่</th><th>งาน</th><th>ลูกค้า</th><th>ประเภท</th><th>สถานะ</th><th>ผู้รับผิดชอบ</th><th class="right">ราคา</th><th class="right">ค้างชำระ</th><th>กำหนดส่ง</th></tr>
+    <tr><th>เลขที่</th><th>งาน</th><th>ลูกค้า</th><th>ประเภท</th><th>ส่งมอบ</th><th>สถานะ</th><th>ผู้รับผิดชอบ</th><th class="right">ราคา</th><th class="right">ค้างชำระ</th><th>กำหนดส่ง</th></tr>
     ${data.rows.map((j) => `<tr class="click" data-href="#/jobs/${j.id}">
       <td class="nowrap">${esc(j.job_no)}</td><td>${esc(j.title)} ${prioTag(j.priority)}</td><td>${esc(j.customer_name)}</td><td>${esc(j.sign_type || '-')}</td>
-      <td>${badge(j.status)}</td><td>${esc(j.assigned_name || '-')}</td><td class="right">${baht(j.price)}</td>
+      <td>${esc(j.delivery_method ? label(state.meta.DELIVERY_METHODS, j.delivery_method) : '-')}</td><td>${badge(j.status)}</td><td>${esc(j.assigned_name || '-')}</td><td class="right">${baht(j.price)}</td>
       <td class="right">${j.price - j.paid > 0 ? baht(j.price - j.paid) : '-'}</td><td class="nowrap">${dueHtml(j)}</td></tr>`).join('')}
   </table>` : '<p class="muted">ไม่พบงาน</p>'}</div>`;
 
@@ -387,6 +398,7 @@ async function viewJobs(params) {
         <div class="t">${esc(j.title)}</div>
         <div class="meta"><span>${esc(j.customer_name)}</span><span>${dueHtml(j)}</span></div>
         <div class="meta"><span>${esc(j.sign_type || '')}</span><span>${esc(j.assigned_name || '')}</span></div>
+        ${j.delivery_method ? `<div class="meta"><span>🚚 ${esc(label(state.meta.DELIVERY_METHODS, j.delivery_method))}</span></div>` : ''}
       </div>`).join('')}</div>`;
   }).join('')}</div>`;
 
@@ -396,6 +408,7 @@ async function viewJobs(params) {
       <input name="q" placeholder="ค้นหาเลขที่, ชื่องาน, ลูกค้า" value="${esc(q)}">
       <select name="status">${options(S, status, { empty: mode === 'board' ? 'งานที่ยังไม่เสร็จ' : 'ทุกสถานะ' })}</select>
       <select name="job_type_id">${options(state.jobTypes.map((t) => ({ key: t.id, label: t.name })), jobType, { empty: 'ทุกประเภทงาน' })}</select>
+      <select name="delivery_method">${options(state.meta.DELIVERY_METHODS, delivery, { empty: 'ทุกวิธีส่งมอบ' })}</select>
       <select name="assigned_to">${options(state.users.map((u) => ({ key: u.id, label: u.name })), assigned, { empty: 'ผู้รับผิดชอบทั้งหมด' })}</select>
       <label class="check" style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" name="overdue" ${overdue ? 'checked' : ''} style="width:auto"> เฉพาะงานเลยกำหนด</label>
       <button class="btn">กรอง</button>
@@ -409,7 +422,7 @@ async function viewJobs(params) {
   const go = (view) => {
     const f = formData(form);
     const p = new URLSearchParams({ view });
-    for (const k of ['q', 'status', 'job_type_id', 'assigned_to']) if (f[k]) p.set(k, f[k]);
+    for (const k of ['q', 'status', 'job_type_id', 'delivery_method', 'assigned_to']) if (f[k]) p.set(k, f[k]);
     if (f.overdue) p.set('overdue', '1');
     location.hash = `#/jobs?${p}`;
   };
@@ -451,7 +464,7 @@ async function viewJob(id) {
         <dt>จำนวน</dt><dd>${j.quantity}</dd>
         <dt>กำหนดส่ง</dt><dd>${dueHtml(j)}${isOverdue(j) ? ' (เลยกำหนด)' : ''}</dd>
         <dt>ผู้รับผิดชอบ</dt><dd>${esc(j.assigned_name || '-')}</dd>
-        <dt>ติดตั้ง</dt><dd>${j.install_required ? `ต้องติดตั้ง${j.install_address ? `\n${esc(j.install_address)}` : ''}` : 'ไม่ต้องติดตั้ง'}</dd>
+        <dt>วิธีส่งมอบ</dt><dd>${j.delivery_method ? esc(label(M.DELIVERY_METHODS, j.delivery_method)) : j.install_required ? 'ต้องติดตั้ง' : '-'}${j.install_address ? `\n${esc(j.install_address)}` : ''}</dd>
         <dt>รายละเอียด</dt><dd>${esc(j.description || '-')}</dd>
         <dt>วันที่รับงาน</dt><dd>${thDateTime(j.created_at)}</dd>
         ${j.completed_at ? `<dt>วันที่เสร็จ</dt><dd>${thDateTime(j.completed_at)}</dd>` : ''}

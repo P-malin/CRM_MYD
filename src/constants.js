@@ -33,6 +33,14 @@ const PRIORITIES = [
   { key: 'urgent', label: 'ด่วนมาก' },
 ];
 
+// วิธีส่งมอบงาน — needs_address = ต้องระบุที่อยู่จัดส่ง/ติดตั้ง
+const DELIVERY_METHODS = [
+  { key: 'shop_delivery', label: 'ร้านจัดส่งสินค้า', needs_address: true },
+  { key: 'shop_install', label: 'ร้านเข้าติดตั้งหน้างาน', needs_address: true },
+  { key: 'customer_pickup', label: 'ลูกค้ามารับสินค้าเอง' },
+  { key: 'customer_install', label: 'ลูกค้านำไปติดตั้งเอง' },
+];
+
 const PAYMENT_KINDS = [
   { key: 'deposit', label: 'มัดจำ' },
   { key: 'installment', label: 'ชำระงวด' },
@@ -59,6 +67,7 @@ module.exports = {
   OPEN_STATUSES,
   DEFAULT_JOB_TYPES,
   PRIORITIES,
+  DELIVERY_METHODS,
   PAYMENT_KINDS,
   PAYMENT_METHODS,
   ROLES,

@@ -8,7 +8,7 @@ const DEFAULT_JOB_TYPES_VALUES = DEFAULT_JOB_TYPES.map(
 ).join(',\n    ');
 
 // เพิ่มเลขนี้ทุกครั้งที่แก้ schema เพื่อให้ระบบรัน migration ใหม่
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const TABLES = ['schema_version', 'tenants', 'users', 'sessions', 'customers', 'job_types', 'jobs', 'job_status_logs', 'payments'];
 
 const SCHEMA = `
@@ -116,6 +116,10 @@ FROM tenants t CROSS JOIN (VALUES
     ${DEFAULT_JOB_TYPES_VALUES}
   ) AS v(name, description, requires_detail, sort_order)
 WHERE NOT EXISTS (SELECT 1 FROM job_types jt WHERE jt.tenant_id = t.id);
+
+-- v3: วิธีส่งมอบงาน (งานเก่าที่ติ๊ก "ต้องติดตั้ง" = ร้านเข้าติดตั้งหน้างาน)
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS delivery_method text;
+UPDATE jobs SET delivery_method = 'shop_install' WHERE delivery_method IS NULL AND install_required;
 
 -- ผูกงานเดิมที่ชื่อประเภทตรงกับ master
 UPDATE jobs j SET job_type_id = jt.id FROM job_types jt

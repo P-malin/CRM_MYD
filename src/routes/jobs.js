@@ -1,10 +1,11 @@
 const express = require('express');
 const { requireRole } = require('../auth');
 const { HttpError, str, requireStr, num, oneOf, date, intId, today, pagination } = require('../util');
-const { STATUS_KEYS, OPEN_STATUSES, PRIORITIES, PAYMENT_KINDS, PAYMENT_METHODS } = require('../constants');
+const { STATUS_KEYS, OPEN_STATUSES, PRIORITIES, PAYMENT_KINDS, PAYMENT_METHODS, DELIVERY_METHODS } = require('../constants');
 
 const PRIORITY_KEYS = PRIORITIES.map((p) => p.key);
 const METHOD_KEYS = PAYMENT_METHODS.map((m) => m.key);
+const DELIVERY_KEYS = DELIVERY_METHODS.map((m) => m.key);
 const OPEN_IN = OPEN_STATUSES.map((s) => `'${s}'`).join(',');
 
 const JOB_SELECT = `
@@ -50,13 +51,18 @@ module.exports = function jobRoutes(db) {
       priority: oneOf(pick('priority'), PRIORITY_KEYS, 'ความเร่งด่วน', 'normal'),
       assigned_to: num(pick('assigned_to'), 'ผู้รับผิดชอบ', { min: 1 }),
       due_date: date(pick('due_date'), 'กำหนดส่ง'),
-      install_required: Boolean(pick('install_required')),
-      install_address: str(pick('install_address')),
+      delivery_method: oneOf(pick('delivery_method'), DELIVERY_KEYS, 'วิธีส่งมอบ', null),
+      install_required: false,
+      install_address: str(pick('install_address')), // ที่อยู่จัดส่ง/ติดตั้ง
     };
     if (!d.customer_id) throw new HttpError(400, 'กรุณาเลือกลูกค้า');
     if (!Number.isInteger(d.quantity) || !Number.isInteger(d.customer_id)) throw new HttpError(400, 'จำนวนต้องเป็นจำนวนเต็ม');
     if (d.assigned_to !== null && !Number.isInteger(d.assigned_to)) throw new HttpError(400, 'ผู้รับผิดชอบไม่ถูกต้อง');
     if (d.job_type_id === null && !current.id) throw new HttpError(400, 'กรุณาเลือกประเภทงาน');
+    if (d.delivery_method === null && !current.id) throw new HttpError(400, 'กรุณาเลือกวิธีส่งมอบ');
+    const delivery = DELIVERY_METHODS.find((m) => m.key === d.delivery_method);
+    if (delivery?.needs_address && !d.install_address) throw new HttpError(400, `"${delivery.label}" ต้องระบุที่อยู่จัดส่ง/ติดตั้ง`);
+    d.install_required = d.delivery_method === 'shop_install';
     if (d.job_type_id !== null) {
       // ประเภทที่ปิดใช้งานแล้ว เลือกใหม่ไม่ได้ แต่งานเดิมที่ใช้อยู่ยังบันทึกต่อได้
       const type = await db.one('SELECT name, requires_detail, active FROM job_types WHERE id = ? AND tenant_id = ?', [d.job_type_id, tenantId]);
@@ -86,6 +92,10 @@ module.exports = function jobRoutes(db) {
     if (Number.isInteger(Number(req.query.customer_id)) && req.query.customer_id) {
       conds.push('j.customer_id = ?');
       params.push(Number(req.query.customer_id));
+    }
+    if (DELIVERY_KEYS.includes(req.query.delivery_method)) {
+      conds.push('j.delivery_method = ?');
+      params.push(req.query.delivery_method);
     }
     if (Number.isInteger(Number(req.query.job_type_id)) && req.query.job_type_id) {
       conds.push('j.job_type_id = ?');

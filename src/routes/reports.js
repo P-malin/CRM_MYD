@@ -1,6 +1,6 @@
 const express = require('express');
 const { HttpError, date, today } = require('../util');
-const { JOB_STATUSES, OPEN_STATUSES } = require('../constants');
+const { JOB_STATUSES, OPEN_STATUSES, DELIVERY_METHODS } = require('../constants');
 
 const OPEN_IN = OPEN_STATUSES.map((s) => `'${s}'`).join(',');
 
@@ -164,21 +164,22 @@ module.exports = function reportRoutes(db) {
     const t = req.user.tenant_id;
     const { from, to } = range(req.query);
     const labels = Object.fromEntries(JOB_STATUSES.map((s) => [s.key, s.label]));
+    const deliveryLabels = Object.fromEntries(DELIVERY_METHODS.map((m) => [m.key, m.label]));
     const rows = await db.query(
       `SELECT j.job_no, to_char(j.created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD') AS created, c.name AS customer, c.phone,
          j.title, j.sign_type, j.material, j.width_cm, j.height_cm, j.quantity, j.price,
          (SELECT COALESCE(SUM(amount), 0) FROM payments p WHERE p.job_id = j.id) AS paid,
-         j.status, j.due_date, u.name AS assigned
+         j.status, j.due_date, u.name AS assigned, j.delivery_method, j.install_address
        FROM jobs j JOIN customers c ON c.id = j.customer_id LEFT JOIN users u ON u.id = j.assigned_to
        WHERE j.tenant_id = ? AND ${LOCAL_DATE('j.created_at')} BETWEEN ? AND ? ORDER BY j.id`,
       [t, from, to],
     );
-    const header = ['เลขที่งาน', 'วันที่รับงาน', 'ลูกค้า', 'โทร', 'ชื่องาน', 'ประเภทงาน', 'วัสดุ', 'กว้าง(ซม.)', 'สูง(ซม.)', 'จำนวน', 'ราคา', 'ชำระแล้ว', 'คงค้าง', 'สถานะ', 'กำหนดส่ง', 'ผู้รับผิดชอบ'];
+    const header = ['เลขที่งาน', 'วันที่รับงาน', 'ลูกค้า', 'โทร', 'ชื่องาน', 'ประเภทงาน', 'วัสดุ', 'กว้าง(ซม.)', 'สูง(ซม.)', 'จำนวน', 'ราคา', 'ชำระแล้ว', 'คงค้าง', 'สถานะ', 'กำหนดส่ง', 'ผู้รับผิดชอบ', 'วิธีส่งมอบ', 'ที่อยู่จัดส่ง/ติดตั้ง'];
     const lines = [header.join(',')];
     for (const x of rows) {
       lines.push(
         [x.job_no, x.created, x.customer, x.phone, x.title, x.sign_type, x.material, x.width_cm, x.height_cm, x.quantity, x.price, x.paid,
-          x.price - x.paid, labels[x.status] || x.status, x.due_date, x.assigned].map(csvCell).join(','),
+          x.price - x.paid, labels[x.status] || x.status, x.due_date, x.assigned, deliveryLabels[x.delivery_method] || '', x.install_address].map(csvCell).join(','),
       );
     }
     res.set('Content-Type', 'text/csv; charset=utf-8');
