@@ -126,7 +126,11 @@ dl.info dt { color: var(--muted); } dl.info dd { margin: 0; white-space: pre-wra
 /* quotation document (A4) */
 .print-bar { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; max-width: 210mm; margin: 16px auto; padding: 0 8px; }
 .doc { background: #fff; width: 210mm; min-height: 297mm; margin: 0 auto 24px; padding: 14mm 14mm 18mm; box-shadow: 0 4px 24px rgb(15 23 42 / .12); color: #111827; font-size: 13px; line-height: 1.45; }
-.doc-head { display: flex; justify-content: space-between; gap: 20px; border-bottom: 3px solid var(--primary); padding-bottom: 12px; }
+.doc-head { display: flex; justify-content: space-between; gap: 24px; border-bottom: 3px solid var(--primary); padding-bottom: 12px; }
+/* ข้อมูลร้านยาวแค่ไหนก็ตัดบรรทัดเอง — ฝั่งหัวเอกสารด้านขวาคงความกว้างไว้ ไม่ตกบรรทัด */
+.doc-shop { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.doc-title { flex: 0 0 auto; max-width: 48%; }
+.doc-title-th, .doc-title-en, .doc-meta th, .doc-meta td { white-space: nowrap; }
 .doc-shop-name { font-size: 20px; font-weight: 800; color: #1e1b4b; margin-bottom: 4px; }
 .doc-title { text-align: right; }
 .doc-title-th { font-size: 26px; font-weight: 800; color: var(--primary); line-height: 1.1; }
