@@ -13,9 +13,20 @@
 | **การชำระเงิน** | บันทึกมัดจำ / งวด / ส่วนที่เหลือ หลายช่องทาง, แสดงยอดคงค้างต่องาน |
 | **รายงาน** | แดชบอร์ดภาพรวม, รายงานตามช่วงวันที่: ยอดรับงาน, ยอดรับชำระ, กราฟรายเดือน, แยกตามประเภทป้าย, ลูกค้ายอดสูงสุด, ผลงานพนักงาน, อัตราส่งงานตรงเวลา, ส่งออก CSV (เปิดใน Excel ภาษาไทยได้) |
 
-## เริ่มใช้งาน
+## สถาปัตยกรรม
 
-ต้องใช้ **Node.js 22.13 ขึ้นไป** (ใช้ SQLite ที่มากับ Node — ไม่ต้องติดตั้งฐานข้อมูลแยก)
+```
+เบราว์เซอร์ ──► Vercel ── หน้าเว็บ (public/) แบบ static
+                    └── /api/* ──► Serverless Function (Express, api/index.js) ──► Supabase (PostgreSQL)
+```
+
+- **Vercel**: โฮสต์หน้าเว็บและ API (region สิงคโปร์ `sin1`)
+- **Supabase**: ใช้เป็นฐานข้อมูล PostgreSQL — ระบบสร้างตารางให้อัตโนมัติตอนเริ่มทำงานครั้งแรก
+- **รันบนเครื่องตัวเอง**: ถ้าไม่ได้ตั้ง `DATABASE_URL` จะใช้ [PGlite](https://pglite.dev) (Postgres ที่ฝังใน Node) เก็บข้อมูลที่ `data/pglite` — ไม่ต้องติดตั้งฐานข้อมูลเอง
+
+## รันบนเครื่องตัวเอง
+
+ต้องใช้ **Node.js 20 ขึ้นไป**
 
 ```bash
 npm install
@@ -25,45 +36,71 @@ npm start        # เปิด http://localhost:3000
 
 บัญชีตัวอย่างหลัง `npm run seed`: `demo@signshop.test` / `password123` (และ `demo2@signshop.test` สำหรับร้านที่ 2)
 
-ตัวแปรสภาพแวดล้อม: `PORT` (ค่าเริ่มต้น 3000), `DB_FILE` (ค่าเริ่มต้น `data/crm.db`)
-
 ```bash
 npm test         # ทดสอบ API รวมถึงการแยกข้อมูลระหว่างร้าน
 npm run dev      # รันแบบ auto-reload ระหว่างพัฒนา
 ```
 
-## Deploy ขึ้น Railway
+| ตัวแปร | ความหมาย |
+|---|---|
+| `DATABASE_URL` | connection string ของ Postgres (Supabase) — ถ้าไม่ตั้งจะใช้ PGlite |
+| `PGLITE_DIR` | โฟลเดอร์เก็บข้อมูล PGlite (ค่าเริ่มต้น `data/pglite`) |
+| `PORT` | พอร์ตตอนรันบนเครื่อง (ค่าเริ่มต้น 3000) |
+| `PG_POOL_MAX` | จำนวน connection สูงสุดต่อ instance (ค่าเริ่มต้น 3) |
+| `TEST_DATABASE_URL` | ใช้รันเทสต์กับ Postgres จริง (ต้องเป็นฐานข้อมูลว่าง) |
 
-โปรเจคมี `Dockerfile` และ `railway.json` เตรียมไว้แล้ว (build ด้วย Docker, มี healthcheck ที่ `/healthz`)
+## Deploy: Supabase + Vercel
 
-1. สมัคร/เข้าสู่ระบบที่ https://railway.com แล้วกด **New Project → Deploy from GitHub repo** เลือก repo นี้
-2. ไปที่ service → **Settings → Source** เลือก branch ที่ต้องการ deploy
-3. **สำคัญ: เพิ่ม Volume เพื่อไม่ให้ข้อมูลหาย** — คลิกขวาที่ service → **Attach Volume** ตั้ง Mount path เป็น `/data`
-   (ถ้าไม่มี Volume ข้อมูลทั้งหมดจะหายทุกครั้งที่ deploy ใหม่)
-4. **Settings → Networking → Generate Domain** เพื่อรับ URL สาธารณะ (เช่น `https://crm-myd-production.up.railway.app`)
-5. รอ deploy เสร็จ แล้วเปิด URL นั้น → สมัครร้านแรกได้เลย
+### 1. สร้างฐานข้อมูลบน Supabase
+1. สมัครที่ https://supabase.com → **New project**
+2. ตั้งชื่อโปรเจค, ตั้ง **Database Password** (จดไว้), Region เลือก **Southeast Asia (Singapore)**
+3. เมื่อสร้างเสร็จ กดปุ่ม **Connect** ด้านบน → เลือก **Transaction pooler** (พอร์ต `6543`) แล้วคัดลอก URI จะได้หน้าตาประมาณ
+   `postgresql://postgres.xxxxxxxx:[YOUR-PASSWORD]@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres`
+4. แทน `[YOUR-PASSWORD]` ด้วยรหัสผ่านจากข้อ 2
 
-ไม่ต้องตั้งตัวแปรเพิ่ม: Railway ส่ง `PORT` มาให้เอง และ `DB_FILE` ตั้งไว้เป็น `/data/crm.db` ใน Dockerfile แล้ว
+> ต้องใช้ **Transaction pooler** เท่านั้น — Vercel เป็น serverless เชื่อมต่อแบบ Direct connection ไม่ได้
 
-ถ้าต้องการข้อมูลตัวอย่างบนเซิร์ฟเวอร์ (ไม่แนะนำบนระบบจริง) ใช้ Railway CLI: `railway ssh` แล้วรัน `node scripts/seed.js`
+ไม่ต้องสร้างตารางเอง แอปจะสร้างให้ตอนมี request แรก
 
-**สำรองข้อมูล:** ข้อมูลทั้งหมดอยู่ในไฟล์ `/data/crm.db` ไฟล์เดียว — เปิด Volume Backups ในหน้า Volume ของ Railway เพื่อสำรองอัตโนมัติ
+### 2. Deploy บน Vercel
+1. สมัครที่ https://vercel.com ด้วยบัญชี GitHub → **Add New… → Project** → Import repo นี้
+2. Framework Preset: เลือก **Other** (ค่าอื่นตั้งไว้ใน `vercel.json` แล้ว)
+3. เปิด **Environment Variables** เพิ่ม `DATABASE_URL` = URI จาก Supabase ข้อ 1
+4. กด **Deploy** → เสร็จแล้วจะได้ URL เช่น `https://crm-myd.vercel.app`
+5. เปิด `https://<โดเมน>/healthz` ควรเห็น `{"ok":true}` จากนั้นเปิดหน้าเว็บแล้วสมัครร้านแรกได้เลย
+
+ทุกครั้งที่ push ขึ้น GitHub, Vercel จะ deploy ใหม่ให้อัตโนมัติ (branch อื่นที่ไม่ใช่ production จะได้ URL preview แยก)
+
+### ใส่ข้อมูลตัวอย่างบน Supabase (ไม่บังคับ)
+```bash
+DATABASE_URL="postgresql://...:6543/postgres" npm run seed
+```
+
+### ความปลอดภัยของฐานข้อมูล
+- ทุกตารางเปิด **Row Level Security** โดยไม่มี policy → ไม่มีใครอ่าน/เขียนข้อมูลผ่าน Supabase Data API (anon key) ได้
+- แอปเชื่อมต่อด้วย role `postgres` ผ่าน `DATABASE_URL` เท่านั้น — **ห้ามเผยแพร่ `DATABASE_URL`** และอย่าใส่ไว้ในโค้ด
+- สำรองข้อมูล: Supabase มี backup อัตโนมัติในแพ็กเกจ Pro; แพ็กเกจฟรีให้ export เองจากหน้า Database → Backups หรือใช้ `pg_dump`
+
+### ข้อควรรู้เรื่องแพ็กเกจฟรี
+- Supabase ฟรี: ฐานข้อมูล 500 MB และ **โปรเจคจะถูกพักถ้าไม่มีการใช้งาน 1 สัปดาห์** (ต้องกด Restore ในหน้า dashboard)
+- Vercel Hobby (ฟรี): ใช้ได้เฉพาะงานส่วนตัวที่ไม่ใช่เชิงพาณิชย์ — เมื่อเปิดขายให้ร้านลูกค้าควรอัปเกรดเป็น Pro
 
 ## โครงสร้างโปรเจค
 
 ```
+api/index.js         จุดเข้าใช้งานบน Vercel (serverless function)
 src/
-  server.js          จุดเริ่มต้นโปรแกรม
+  server.js          รันบนเครื่องตัวเอง (npm start)
   app.js             ประกอบ Express app + error handler
-  db.js              schema ฐานข้อมูล (SQLite)
+  db.js              เชื่อมฐานข้อมูล (pg สำหรับ Supabase / PGlite สำหรับเครื่องตัวเอง) + migration อัตโนมัติ
+  schema.js          โครงสร้างตาราง (PostgreSQL)
   auth.js            hash รหัสผ่าน (scrypt), session token, ตรวจสิทธิ์
   constants.js       สถานะงาน ประเภทป้าย ช่องทางชำระ ฯลฯ
   routes/            auth, users, customers, jobs, reports
 public/              หน้าเว็บ (HTML/CSS/JS ล้วน ไม่ต้อง build)
 scripts/seed.js      ข้อมูลตัวอย่าง
-Dockerfile           สำหรับ deploy (Railway หรือที่อื่นที่รองรับ Docker)
-railway.json         ตั้งค่า build/healthcheck ของ Railway
 test/                ทดสอบ API (node:test)
+vercel.json          ตั้งค่า Vercel (region, rewrites)
 ```
 
 ## การแยกข้อมูลแต่ละร้าน (Multi-tenant)
@@ -98,4 +135,5 @@ test/                ทดสอบ API (node:test)
 - แนบไฟล์แบบป้าย/รูปหน้างาน และให้ลูกค้าอนุมัติแบบผ่านลิงก์
 - แจ้งเตือนผ่าน LINE เมื่อสถานะงานเปลี่ยน หรือใกล้ถึงกำหนดส่ง
 - ระบบแพ็กเกจ/การเรียกเก็บเงินรายเดือนสำหรับแต่ละร้าน (SaaS billing)
-- ถ้าจำนวนร้านเยอะขึ้น ย้ายไป PostgreSQL (schema เขียนเป็น SQL มาตรฐาน ย้ายได้ไม่ยาก)
+- ใช้ Supabase Storage เก็บไฟล์แบบป้าย / รูปหน้างาน
+- ใช้ Supabase Auth (ล็อกอินด้วย Google, ลืมรหัสผ่านทางอีเมล)

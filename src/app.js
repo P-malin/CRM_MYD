@@ -12,9 +12,9 @@ function createApp(db) {
     next();
   });
 
-  // ใช้ตรวจสุขภาพระบบ (Railway healthcheck)
-  app.get('/healthz', (req, res) => {
-    db.prepare('SELECT 1').get();
+  // ใช้ตรวจสุขภาพระบบ (เปิด /healthz เพื่อเช็กว่าแอปต่อฐานข้อมูลได้)
+  app.get('/healthz', async (req, res) => {
+    await db.one('SELECT 1');
     res.json({ ok: true });
   });
 

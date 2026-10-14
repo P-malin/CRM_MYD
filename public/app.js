@@ -8,13 +8,10 @@ const $app = document.getElementById('app');
 const esc = (v) =>
   String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const baht = (n) => `฿${Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
-const thDate = (s) => {
-  if (!s) return '-';
-  const d = new Date(s.length === 10 ? `${s}T00:00:00` : `${s.replace(' ', 'T')}Z`);
-  return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' });
-};
-const thDateTime = (s) =>
-  s ? new Date(`${s.replace(' ', 'T')}Z`).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }) : '-';
+// วันที่จาก API: 'YYYY-MM-DD' (วันที่ล้วน) หรือ ISO timestamp
+const parseDate = (s) => new Date(s.length === 10 ? `${s}T00:00:00` : s);
+const thDate = (s) => (s ? parseDate(s).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' }) : '-');
+const thDateTime = (s) => (s ? parseDate(s).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }) : '-');
 const todayStr = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const label = (list, key) => (list.find((x) => x.key === key) || {}).label || key || '-';
 const statusOf = (key) => state.meta.JOB_STATUSES.find((s) => s.key === key) || { label: key, color: '#999' };

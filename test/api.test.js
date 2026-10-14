@@ -5,15 +5,21 @@ const { createApp } = require('../src/app');
 
 let server;
 let base;
+let db;
 
 test.before(async () => {
-  const app = createApp(openDb(':memory:'));
+  // ตั้ง TEST_DATABASE_URL เพื่อทดสอบกับ Postgres จริง (ต้องเป็นฐานข้อมูลว่าง)
+  db = await openDb(process.env.TEST_DATABASE_URL || ':memory:');
+  const app = createApp(db);
   await new Promise((resolve) => {
     server = app.listen(0, resolve);
   });
   base = `http://127.0.0.1:${server.address().port}/api`;
 });
-test.after(() => server.close());
+test.after(async () => {
+  server.close();
+  await db.close();
+});
 
 async function call(method, path, { token, body } = {}) {
   const res = await fetch(base + path, {

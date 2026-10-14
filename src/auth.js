@@ -19,15 +19,17 @@ function verifyPassword(password, stored) {
 
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
-function createSession(db, userId) {
+async function createSession(db, userId) {
   const token = crypto.randomBytes(32).toString('base64url');
   const expires = new Date(Date.now() + SESSION_DAYS * 86400 * 1000).toISOString();
-  db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run(sha256(token), userId, expires);
+  await db.run('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)', [sha256(token), userId, expires]);
+  // ล้าง session หมดอายุของผู้ใช้คนนี้ไปด้วย
+  await db.run('DELETE FROM sessions WHERE user_id = ? AND expires_at < now()', [userId]);
   return token;
 }
 
-function destroySession(db, token) {
-  db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha256(token));
+async function destroySession(db, token) {
+  await db.run('DELETE FROM sessions WHERE token_hash = ?', [sha256(token)]);
 }
 
 function bearer(req) {
@@ -37,15 +39,18 @@ function bearer(req) {
 
 // ตรวจ token และผูก req.user (รวม tenant_id) — ทุก query ข้อมูลร้านต้องกรองด้วย req.user.tenant_id
 function requireAuth(db) {
-  const stmt = db.prepare(`
-    SELECT u.id, u.tenant_id, u.name, u.email, u.role
-    FROM sessions s JOIN users u ON u.id = s.user_id
-    WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1`);
-  return (req, res, next) => {
+  return async (req, res, next) => {
     const token = bearer(req);
-    const user = token && stmt.get(sha256(token), new Date().toISOString());
-    if (!user) return next(new HttpError(401, 'กรุณาเข้าสู่ระบบ'));
-    req.user = { ...user };
+    const user =
+      token &&
+      (await db.one(
+        `SELECT u.id, u.tenant_id, u.name, u.email, u.role
+         FROM sessions s JOIN users u ON u.id = s.user_id
+         WHERE s.token_hash = ? AND s.expires_at > now() AND u.active`,
+        [sha256(token)],
+      ));
+    if (!user) throw new HttpError(401, 'กรุณาเข้าสู่ระบบ');
+    req.user = user;
     req.token = token;
     next();
   };

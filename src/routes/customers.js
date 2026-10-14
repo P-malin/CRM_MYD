@@ -14,69 +14,68 @@ function readBody(b) {
 module.exports = function customerRoutes(db) {
   const r = express.Router();
 
-  const getCustomer = (tenantId, id) => {
-    const c = db.prepare('SELECT * FROM customers WHERE id = ? AND tenant_id = ?').get(id, tenantId);
+  const getCustomer = async (tenantId, id) => {
+    const c = await db.one('SELECT * FROM customers WHERE id = ? AND tenant_id = ?', [id, tenantId]);
     if (!c) throw new HttpError(404, 'ไม่พบลูกค้า');
     return c;
   };
 
-  r.get('/customers', (req, res) => {
+  r.get('/customers', async (req, res) => {
     const { limit, offset } = pagination(req.query);
     const params = [req.user.tenant_id];
     let where = 'c.tenant_id = ?';
     const q = str(req.query.q);
     if (q) {
-      where += ' AND (c.name LIKE ? OR c.company LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.line_id LIKE ?)';
+      where += ' AND (c.name ILIKE ? OR c.company ILIKE ? OR c.phone ILIKE ? OR c.email ILIKE ? OR c.line_id ILIKE ?)';
       params.push(...Array(5).fill(`%${q}%`));
     }
-    const total = db.prepare(`SELECT COUNT(*) n FROM customers c WHERE ${where}`).get(...params).n;
-    const rows = db
-      .prepare(
-        `SELECT c.*,
-           (SELECT COUNT(*) FROM jobs j WHERE j.customer_id = c.id AND j.status != 'cancelled') AS job_count,
-           (SELECT COALESCE(SUM(j.price), 0) FROM jobs j WHERE j.customer_id = c.id AND j.status != 'cancelled') AS total_value,
-           (SELECT MAX(j.created_at) FROM jobs j WHERE j.customer_id = c.id) AS last_job_at
-         FROM customers c WHERE ${where}
-         ORDER BY c.name LIMIT ? OFFSET ?`,
-      )
-      .all(...params, limit, offset);
+    const { n: total } = await db.one(`SELECT COUNT(*) n FROM customers c WHERE ${where}`, params);
+    const rows = await db.query(
+      `SELECT c.*,
+         (SELECT COUNT(*) FROM jobs j WHERE j.customer_id = c.id AND j.status != 'cancelled') AS job_count,
+         (SELECT COALESCE(SUM(j.price), 0) FROM jobs j WHERE j.customer_id = c.id AND j.status != 'cancelled') AS total_value,
+         (SELECT MAX(j.created_at) FROM jobs j WHERE j.customer_id = c.id) AS last_job_at
+       FROM customers c WHERE ${where}
+       ORDER BY c.name LIMIT ? OFFSET ?`,
+      [...params, limit, offset],
+    );
     res.json({ total, rows });
   });
 
-  r.get('/customers/:id', (req, res) => {
-    const c = getCustomer(req.user.tenant_id, intId(req.params.id));
-    c.jobs = db
-      .prepare(
-        `SELECT j.id, j.job_no, j.title, j.status, j.price, j.due_date, j.created_at,
-           (SELECT COALESCE(SUM(amount), 0) FROM payments p WHERE p.job_id = j.id) AS paid
-         FROM jobs j WHERE j.customer_id = ? AND j.tenant_id = ? ORDER BY j.created_at DESC`,
-      )
-      .all(c.id, req.user.tenant_id);
+  r.get('/customers/:id', async (req, res) => {
+    const c = await getCustomer(req.user.tenant_id, intId(req.params.id));
+    c.jobs = await db.query(
+      `SELECT j.id, j.job_no, j.title, j.status, j.price, j.due_date, j.created_at,
+         (SELECT COALESCE(SUM(amount), 0) FROM payments p WHERE p.job_id = j.id) AS paid
+       FROM jobs j WHERE j.customer_id = ? AND j.tenant_id = ? ORDER BY j.created_at DESC`,
+      [c.id, req.user.tenant_id],
+    );
     res.json(c);
   });
 
-  r.post('/customers', (req, res) => {
+  r.post('/customers', async (req, res) => {
     const d = readBody(req.body);
-    const { lastInsertRowid } = db
-      .prepare(`INSERT INTO customers (tenant_id, ${FIELDS.join(', ')}) VALUES (?, ${FIELDS.map(() => '?').join(', ')})`)
-      .run(req.user.tenant_id, ...FIELDS.map((f) => d[f]));
-    res.status(201).json(getCustomer(req.user.tenant_id, lastInsertRowid));
-  });
-
-  r.put('/customers/:id', (req, res) => {
-    const c = getCustomer(req.user.tenant_id, intId(req.params.id));
-    const d = readBody(req.body);
-    db.prepare(`UPDATE customers SET ${FIELDS.map((f) => `${f} = ?`).join(', ')}, updated_at = datetime('now') WHERE id = ?`).run(
-      ...FIELDS.map((f) => d[f]),
-      c.id,
+    const c = await db.one(
+      `INSERT INTO customers (tenant_id, ${FIELDS.join(', ')}) VALUES (?, ${FIELDS.map(() => '?').join(', ')}) RETURNING *`,
+      [req.user.tenant_id, ...FIELDS.map((f) => d[f])],
     );
-    res.json(getCustomer(req.user.tenant_id, c.id));
+    res.status(201).json(c);
   });
 
-  r.delete('/customers/:id', requireRole('owner', 'admin'), (req, res) => {
-    const c = getCustomer(req.user.tenant_id, intId(req.params.id));
-    if (db.prepare('SELECT 1 FROM jobs WHERE customer_id = ?').get(c.id)) throw new HttpError(409, 'ลูกค้ารายนี้มีงานอยู่ ไม่สามารถลบได้');
-    db.prepare('DELETE FROM customers WHERE id = ?').run(c.id);
+  r.put('/customers/:id', async (req, res) => {
+    const c = await getCustomer(req.user.tenant_id, intId(req.params.id));
+    const d = readBody(req.body);
+    const updated = await db.one(
+      `UPDATE customers SET ${FIELDS.map((f) => `${f} = ?`).join(', ')}, updated_at = now() WHERE id = ? RETURNING *`,
+      [...FIELDS.map((f) => d[f]), c.id],
+    );
+    res.json(updated);
+  });
+
+  r.delete('/customers/:id', requireRole('owner', 'admin'), async (req, res) => {
+    const c = await getCustomer(req.user.tenant_id, intId(req.params.id));
+    if (await db.one('SELECT 1 FROM jobs WHERE customer_id = ? LIMIT 1', [c.id])) throw new HttpError(409, 'ลูกค้ารายนี้มีงานอยู่ ไม่สามารถลบได้');
+    await db.run('DELETE FROM customers WHERE id = ?', [c.id]);
     res.json({ ok: true });
   });
 
