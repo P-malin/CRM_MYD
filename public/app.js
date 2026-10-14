@@ -726,9 +726,18 @@ function bindLineCard(main) {
     if (!f.token && !f.secret) throw new Error('กรอก Channel secret หรือ Channel access token');
     await api('PUT', '/line/settings', f);
   }, 'บันทึกการตั้งค่า LINE แล้ว'));
-  card.querySelector('#line-enabled').addEventListener('change', act(async () => {
-    await api('PUT', '/line/settings', { enabled: card.querySelector('#line-enabled').checked });
-  }));
+  card.querySelector('#line-enabled').addEventListener('change', async (e) => {
+    const sw = e.target;
+    try {
+      await api('PUT', '/line/settings', { enabled: sw.checked });
+      toast(sw.checked ? 'เปิดการแจ้งเตือน LINE แล้ว' : 'ปิดการแจ้งเตือน LINE แล้ว');
+    } catch (ex) {
+      sw.checked = !sw.checked; // เปิดไม่สำเร็จ → สวิตช์กลับสถานะเดิม
+      toast(ex.message, true);
+      return;
+    }
+    route();
+  });
   card.querySelector('#copy-webhook')?.addEventListener('click', async () => {
     const input = card.querySelector('#webhook-url');
     try {
