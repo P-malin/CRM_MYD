@@ -20,7 +20,7 @@
                     └── /api/* ──► Serverless Function (Express, api/index.js) ──► Supabase (PostgreSQL)
 ```
 
-- **Vercel**: โฮสต์หน้าเว็บและ API (region สิงคโปร์ `sin1`)
+- **Vercel**: โฮสต์หน้าเว็บและ API (region โตเกียว `hnd1` ให้อยู่ใกล้ฐานข้อมูล Supabase)
 - **Supabase**: ใช้เป็นฐานข้อมูล PostgreSQL — ระบบสร้างตารางให้อัตโนมัติตอนเริ่มทำงานครั้งแรก
 - **รันบนเครื่องตัวเอง**: ถ้าไม่ได้ตั้ง `DATABASE_URL` จะใช้ [PGlite](https://pglite.dev) (Postgres ที่ฝังใน Node) เก็บข้อมูลที่ `data/pglite` — ไม่ต้องติดตั้งฐานข้อมูลเอง
 
@@ -53,9 +53,9 @@ npm run dev      # รันแบบ auto-reload ระหว่างพัฒ
 
 ### 1. สร้างฐานข้อมูลบน Supabase
 1. สมัครที่ https://supabase.com → **New project**
-2. ตั้งชื่อโปรเจค, ตั้ง **Database Password** (จดไว้), Region เลือก **Southeast Asia (Singapore)**
+2. ตั้งชื่อโปรเจค, ตั้ง **Database Password** (จดไว้), Region เลือกให้ตรงกับ `regions` ใน `vercel.json` (ตอนนี้ตั้งเป็นโตเกียว `hnd1` ตรงกับ Supabase `ap-northeast-1`)
 3. เมื่อสร้างเสร็จ กดปุ่ม **Connect** ด้านบน → เลือก **Transaction pooler** (พอร์ต `6543`) แล้วคัดลอก URI จะได้หน้าตาประมาณ
-   `postgresql://postgres.xxxxxxxx:[YOUR-PASSWORD]@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres`
+   `postgresql://postgres.xxxxxxxx:[YOUR-PASSWORD]@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres`
 4. แทน `[YOUR-PASSWORD]` ด้วยรหัสผ่านจากข้อ 2
 
 > ต้องใช้ **Transaction pooler** เท่านั้น — Vercel เป็น serverless เชื่อมต่อแบบ Direct connection ไม่ได้
