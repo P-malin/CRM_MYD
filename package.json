@@ -1,0 +1,17 @@
+{
+  "name": "crm-myd",
+  "version": "0.1.0",
+  "description": "CRM สำหรับร้านป้าย แบบหลายร้าน (multi-tenant): ข้อมูลลูกค้า รับงาน ติดตามสถานะงาน รายงาน",
+  "main": "src/server.js",
+  "private": true,
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
+    "seed": "node --disable-warning=ExperimentalWarning scripts/seed.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}
