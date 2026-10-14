@@ -1,7 +1,7 @@
 /* CRM ร้านป้าย — หน้าเว็บแบบ single-page (vanilla JS) */
 'use strict';
 
-const state = { token: localStorage.getItem('token'), me: null, meta: null, users: [] };
+const state = { token: localStorage.getItem('token'), me: null, meta: null, users: [], jobTypes: [] };
 const $app = document.getElementById('app');
 
 // ---------- helpers ----------
@@ -106,6 +106,7 @@ function logoutLocal() {
 async function loadSession() {
   state.me = await api('GET', '/auth/me');
   state.users = await api('GET', '/users');
+  state.jobTypes = await api('GET', '/job-types?all=1');
 }
 
 function renderAuth(mode) {
@@ -309,6 +310,9 @@ async function jobForm(job = {}) {
     return;
   }
   const users = state.users.filter((u) => u.active || u.id === job.assigned_to);
+  // ประเภทที่ปิดใช้งานแล้วจะไม่แสดง ยกเว้นเป็นประเภทเดิมของงานนี้
+  const types = state.jobTypes.filter((t) => t.active || t.id === job.job_type_id);
+  const legacyType = editing && !job.job_type_id && job.sign_type; // งานเก่าก่อนมี master
   const v = (k) => esc(job[k] ?? '');
   openModal(editing ? `แก้ไขงาน ${job.job_no}` : 'รับงานใหม่', `
     <form class="form">
@@ -316,9 +320,10 @@ async function jobForm(job = {}) {
         ${options(customers.map((c) => ({ key: c.id, label: c.company ? `${c.name} (${c.company})` : c.name })), job.customer_id, { empty: '-- เลือกลูกค้า --' })}
       </select></div>
       <div class="full"><label>ชื่องาน *</label><input name="title" required value="${v('title')}" placeholder="เช่น ป้ายหน้าร้านกาแฟ"></div>
-      <div><label>ประเภทป้าย</label><input name="sign_type" list="sign-types" value="${v('sign_type')}">
-        <datalist id="sign-types">${state.meta.SIGN_TYPES.map((t) => `<option value="${esc(t)}">`).join('')}</datalist></div>
-      <div><label>วัสดุ</label><input name="material" value="${v('material')}" placeholder="เช่น อะคริลิก 5 มม., ไวนิล 380 แกรม"></div>
+      <div class="full"><label>ประเภทงาน *</label><select name="job_type_id" ${legacyType ? '' : 'required'}>
+        ${options(types.map((t) => ({ key: t.id, label: t.active ? t.name : `${t.name} (ปิดใช้งาน)` })), job.job_type_id, { empty: legacyType ? `${job.sign_type} (เดิม)` : '-- เลือกประเภทงาน --' })}
+        </select><div class="muted" id="type-hint" style="font-size:13px;margin-top:4px"></div></div>
+      <div class="full"><label>วัสดุ</label><input name="material" value="${v('material')}" placeholder="เช่น อะคริลิก 5 มม., ไวนิล 380 แกรม"></div>
       <div><label>กว้าง (ซม.)</label><input name="width_cm" type="number" min="0" step="any" value="${v('width_cm')}"></div>
       <div><label>สูง (ซม.)</label><input name="height_cm" type="number" min="0" step="any" value="${v('height_cm')}"></div>
       <div><label>จำนวน</label><input name="quantity" type="number" min="1" step="1" value="${job.quantity ?? 1}"></div>
@@ -328,7 +333,7 @@ async function jobForm(job = {}) {
       <div><label>กำหนดส่ง</label><input name="due_date" type="date" value="${v('due_date')}"></div>
       <div><label>ความเร่งด่วน</label><select name="priority">${options(state.meta.PRIORITIES, job.priority || 'normal')}</select></div>
       <div class="full"><label>ผู้รับผิดชอบ</label><select name="assigned_to">${options(users.map((u) => ({ key: u.id, label: u.name })), job.assigned_to, { empty: '-- ยังไม่มอบหมาย --' })}</select></div>
-      <div class="full"><label>รายละเอียดงาน</label><textarea name="description">${v('description')}</textarea></div>
+      <div class="full"><label id="desc-label">รายละเอียดงาน</label><textarea name="description">${v('description')}</textarea></div>
       <div class="full check"><input type="checkbox" name="install_required" id="inst" ${job.install_required ? 'checked' : ''}><label for="inst" style="margin:0">ต้องติดตั้งหน้างาน</label></div>
       <div class="full"><label>สถานที่ติดตั้ง</label><textarea name="install_address">${v('install_address')}</textarea></div>
       <div class="full error"></div>
@@ -339,6 +344,16 @@ async function jobForm(job = {}) {
     if (location.hash === `#/jobs/${saved.id}`) route();
     else location.hash = `#/jobs/${saved.id}`;
   });
+  // แสดงคำอธิบายของประเภทงาน และบังคับกรอกรายละเอียดถ้าประเภทนั้นต้องระบุ
+  const form = $modal.querySelector('form');
+  const syncType = () => {
+    const t = state.jobTypes.find((x) => x.id === Number(form.job_type_id.value));
+    form.querySelector('#type-hint').textContent = t?.description || '';
+    form.description.required = Boolean(t?.requires_detail);
+    form.querySelector('#desc-label').textContent = t?.requires_detail ? 'รายละเอียดงาน * (ประเภทนี้ต้องระบุ)' : 'รายละเอียดงาน';
+  };
+  form.job_type_id.addEventListener('change', syncType);
+  syncType();
 }
 
 async function viewJobs(params) {
@@ -348,7 +363,8 @@ async function viewJobs(params) {
   const status = params.get('status') || '';
   const overdue = params.get('overdue') === '1';
   const assigned = params.get('assigned_to') || '';
-  const qs = new URLSearchParams({ limit: '200', q, status, assigned_to: assigned, ...(overdue ? { overdue: '1' } : {}) });
+  const jobType = params.get('job_type_id') || '';
+  const qs = new URLSearchParams({ limit: '200', q, status, assigned_to: assigned, job_type_id: jobType, ...(overdue ? { overdue: '1' } : {}) });
   // มุมมองบอร์ด: ซ่อนงานที่เสร็จ/ยกเลิกเว้นแต่กรองสถานะเอง
   if (mode === 'board' && !status) qs.set('open', '1');
   const data = await api('GET', `/jobs?${qs}`);
@@ -379,6 +395,7 @@ async function viewJobs(params) {
     <form class="toolbar" id="filters">
       <input name="q" placeholder="ค้นหาเลขที่, ชื่องาน, ลูกค้า" value="${esc(q)}">
       <select name="status">${options(S, status, { empty: mode === 'board' ? 'งานที่ยังไม่เสร็จ' : 'ทุกสถานะ' })}</select>
+      <select name="job_type_id">${options(state.jobTypes.map((t) => ({ key: t.id, label: t.name })), jobType, { empty: 'ทุกประเภทงาน' })}</select>
       <select name="assigned_to">${options(state.users.map((u) => ({ key: u.id, label: u.name })), assigned, { empty: 'ผู้รับผิดชอบทั้งหมด' })}</select>
       <label class="check" style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" name="overdue" ${overdue ? 'checked' : ''} style="width:auto"> เฉพาะงานเลยกำหนด</label>
       <button class="btn">กรอง</button>
@@ -392,7 +409,7 @@ async function viewJobs(params) {
   const go = (view) => {
     const f = formData(form);
     const p = new URLSearchParams({ view });
-    for (const k of ['q', 'status', 'assigned_to']) if (f[k]) p.set(k, f[k]);
+    for (const k of ['q', 'status', 'job_type_id', 'assigned_to']) if (f[k]) p.set(k, f[k]);
     if (f.overdue) p.set('overdue', '1');
     location.hash = `#/jobs?${p}`;
   };
@@ -428,7 +445,7 @@ async function viewJob(id) {
     <div class="grid two">
       <div class="card"><h2>${esc(j.title)} ${prioTag(j.priority)}</h2><dl class="info">
         <dt>ลูกค้า</dt><dd><a href="#/customers/${j.customer_id}">${esc(j.customer_name)}</a>${j.customer_company ? ` (${esc(j.customer_company)})` : ''}${j.customer_phone ? ` · <a href="tel:${esc(j.customer_phone)}">${esc(j.customer_phone)}</a>` : ''}</dd>
-        <dt>ประเภทป้าย</dt><dd>${esc(j.sign_type || '-')}</dd>
+        <dt>ประเภทงาน</dt><dd>${esc(j.sign_type || '-')}</dd>
         <dt>วัสดุ</dt><dd>${esc(j.material || '-')}</dd>
         <dt>ขนาด</dt><dd>${size(j)}</dd>
         <dt>จำนวน</dt><dd>${j.quantity}</dd>
@@ -556,7 +573,7 @@ async function viewReports(params) {
         <div class="bar-label">${thMonth(m.month)}</div></div>`).join('')}</div>
     </div>
     <div class="grid two">
-      <div class="card"><h2>ยอดตามประเภทป้าย</h2>
+      <div class="card"><h2>ยอดตามประเภทงาน</h2>
         ${r.by_sign_type.length ? `<table>${r.by_sign_type.map((x) => `<tr><td>${esc(x.sign_type)}<div class="hbar" style="width:${(x.value / maxType) * 100}%"></div></td>
           <td class="right nowrap">${x.jobs} งาน</td><td class="right nowrap">${baht(x.value)}</td></tr>`).join('')}</table>` : '<p class="muted">ไม่มีข้อมูล</p>'}
       </div>
@@ -596,8 +613,21 @@ async function viewReports(params) {
 }
 
 // ---------- settings ----------
+function jobTypeFormHtml(t = {}) {
+  return `<form class="form">
+    <div class="full"><label>ชื่อประเภทงาน *</label><input name="name" required value="${esc(t.name)}"></div>
+    <div class="full"><label>รายละเอียด</label><input name="description" value="${esc(t.description)}"></div>
+    <div class="full check"><input type="checkbox" name="requires_detail" id="rd" ${t.requires_detail ? 'checked' : ''}>
+      <label for="rd" style="margin:0">ต้องกรอกรายละเอียดงานเมื่อเลือกประเภทนี้ (เช่น งานอื่น ๆ)</label></div>
+    ${t.id ? `<div class="full check"><input type="checkbox" name="active" id="ta" ${t.active ? 'checked' : ''}><label for="ta" style="margin:0">เปิดใช้งาน (ปิดแล้วจะไม่แสดงตอนรับงานใหม่)</label></div>` : ''}
+    <div class="full error"></div>
+    <div class="full form-actions"><button type="button" class="btn" data-close>ยกเลิก</button><button class="btn primary" type="submit">บันทึก</button></div>
+  </form>`;
+}
+
 async function viewSettings() {
   state.users = await api('GET', '/users');
+  state.jobTypes = await api('GET', '/job-types?all=1');
   const t = state.me.tenant;
   const admin = isAdmin();
   const main = shell('settings', `
@@ -622,6 +652,15 @@ async function viewSettings() {
       </div>
     </div>
     <div class="card table-wrap">
+      <div class="page-head"><h2 style="margin:0">ประเภทงาน</h2>${admin ? '<button class="btn primary" id="add-type">+ เพิ่มประเภทงาน</button>' : ''}</div>
+      <table><tr><th>ประเภทงาน</th><th>รายละเอียด</th><th>ต้องระบุรายละเอียด</th><th class="right">จำนวนงาน</th><th>สถานะ</th>${admin ? '<th></th>' : ''}</tr>
+        ${state.jobTypes.map((jt) => `<tr><td>${esc(jt.name)}</td><td>${esc(jt.description || '-')}</td><td>${jt.requires_detail ? '✓' : ''}</td>
+          <td class="right">${jt.job_count}</td><td>${jt.active ? 'ใช้งาน' : '<span class="muted">ปิดใช้งาน</span>'}</td>
+          ${admin ? `<td class="nowrap"><button class="btn small" data-edit-type="${jt.id}">แก้ไข</button>
+            ${jt.job_count ? '' : `<button class="btn small danger" data-del-type="${jt.id}">ลบ</button>`}</td>` : ''}</tr>`).join('')}
+      </table>
+    </div>
+    <div class="card table-wrap">
       <div class="page-head"><h2 style="margin:0">ผู้ใช้งานในร้าน</h2>${admin ? '<button class="btn primary" id="add-user">+ เพิ่มผู้ใช้</button>' : ''}</div>
       <table><tr><th>ชื่อ</th><th>อีเมล</th><th>สิทธิ์</th><th>สถานะ</th>${admin ? '<th></th>' : ''}</tr>
         ${state.users.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${esc(label(state.meta.ROLES, u.role))}</td>
@@ -630,6 +669,36 @@ async function viewSettings() {
       </table>
     </div>`);
 
+  main.querySelector('#add-type')?.addEventListener('click', () =>
+    openModal('เพิ่มประเภทงาน', jobTypeFormHtml(), async (data) => {
+      await api('POST', '/job-types', data);
+      toast('เพิ่มประเภทงานแล้ว');
+      route();
+    }),
+  );
+  main.querySelectorAll('[data-edit-type]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const jt = state.jobTypes.find((x) => x.id === Number(b.dataset.editType));
+      openModal(`แก้ไขประเภทงาน`, jobTypeFormHtml(jt), async (data) => {
+        await api('PUT', `/job-types/${jt.id}`, data);
+        toast('บันทึกประเภทงานแล้ว');
+        route();
+      });
+    }),
+  );
+  main.querySelectorAll('[data-del-type]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const jt = state.jobTypes.find((x) => x.id === Number(b.dataset.delType));
+      if (!confirm(`ลบประเภทงาน "${jt.name}"?`)) return;
+      try {
+        await api('DELETE', `/job-types/${jt.id}`);
+        toast('ลบประเภทงานแล้ว');
+        route();
+      } catch (ex) {
+        toast(ex.message, true);
+      }
+    }),
+  );
   main.querySelector('#shop').addEventListener('submit', async (e) => {
     e.preventDefault();
     try {

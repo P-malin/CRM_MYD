@@ -1,7 +1,8 @@
 // สร้างข้อมูลตัวอย่าง 2 ร้าน: npm run seed  (ใช้ฐานข้อมูลเดียวกับ server: DATABASE_URL หรือ PGlite)
 const { openDb } = require('../src/db');
 const { hashPassword } = require('../src/auth');
-const { JOB_STATUSES, SIGN_TYPES } = require('../src/constants');
+const { JOB_STATUSES } = require('../src/constants');
+const { DEFAULT_JOB_TYPES_VALUES } = require('../src/schema');
 
 const pick = (arr, i) => arr[i % arr.length];
 const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
@@ -23,6 +24,11 @@ const TITLES = ['ป้ายหน้าร้าน', 'ป้ายโปร�
 
 async function seedShop(t, si, shop) {
   const { id: tenant } = await t.one('INSERT INTO tenants (name, phone, address, job_seq) VALUES (?, ?, ?, 24) RETURNING id', [shop.name, '021234567', 'กรุงเทพฯ']);
+  const jobTypes = await t.query(
+    `INSERT INTO job_types (tenant_id, name, description, requires_detail, sort_order)
+     SELECT ?, v.* FROM (VALUES ${DEFAULT_JOB_TYPES_VALUES}) AS v(name, description, requires_detail, sort_order) RETURNING id, name`,
+    [tenant],
+  );
   const { id: owner } = await t.one(
     "INSERT INTO users (tenant_id, name, email, password_hash, role) VALUES (?, 'เจ้าของร้าน', ?, ?, 'owner') RETURNING id",
     [tenant, shop.email, hashPassword('password123')],
@@ -48,11 +54,11 @@ async function seedShop(t, si, shop) {
     const price = 1500 + ((i * 3731) % 45000);
     const jobNo = `J${daysAgo(created).slice(2, 7).replace('-', '')}-${String(i + 1).padStart(4, '0')}`;
     const { id: job } = await t.one(
-      `INSERT INTO jobs (tenant_id, job_no, customer_id, title, sign_type, material, width_cm, height_cm, quantity, price,
+      `INSERT INTO jobs (tenant_id, job_no, customer_id, title, job_type_id, sign_type, description, material, width_cm, height_cm, quantity, price,
          status, priority, assigned_to, due_date, install_required, created_by, created_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       [
-        tenant, jobNo, pick(custIds, i), pick(TITLES, i), pick(SIGN_TYPES, i), pick(['ไวนิล 380 แกรม', 'อะคริลิก 5 มม.', 'สแตนเลส', 'ซิงค์'], i),
+        tenant, jobNo, pick(custIds, i), pick(TITLES, i), pick(jobTypes, i).id, pick(jobTypes, i).name, 'รายละเอียดงานตัวอย่าง', pick(['ไวนิล 380 แกรม', 'อะคริลิก 5 มม.', 'สแตนเลส', 'ซิงค์'], i),
         100 + (i % 5) * 50, 60 + (i % 3) * 40, 1 + (i % 3), price, status, pick(['normal', 'normal', 'high', 'urgent', 'low'], i),
         pick([owner, ...staff], i), dateOffset(-created + 14), i % 2 === 1, owner, daysAgo(created),
         status === 'completed' ? daysAgo(created - 12 - (i % 5)) : null,

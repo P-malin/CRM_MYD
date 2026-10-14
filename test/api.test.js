@@ -57,14 +57,19 @@ test('ขั้นตอนหลัก: ลูกค้า → รับงา�
   const cust = await call('POST', '/customers', { token, body: { name: 'คุณสมชาย', phone: '0812345678' } });
   assert.equal(cust.status, 201);
 
+  const types = (await call('GET', '/job-types', { token })).data;
+  assert.equal(types.length, 8);
+  const acrylic = types.find((t) => t.name === 'อักษรอะคริลิก');
+
   const job = await call('POST', '/jobs', {
     token,
-    body: { customer_id: cust.data.id, title: 'ป้ายหน้าร้าน', sign_type: 'ป้ายไวนิล', width_cm: 300, height_cm: 100, price: 5000, deposit: 2000 },
+    body: { customer_id: cust.data.id, title: 'ป้ายหน้าร้าน', job_type_id: acrylic.id, width_cm: 300, height_cm: 100, price: 5000, deposit: 2000 },
   });
   assert.equal(job.status, 201);
   assert.match(job.data.job_no, /^J\d{4}-0001$/);
   assert.equal(job.data.status, 'new');
   assert.equal(job.data.paid, 2000);
+  assert.equal(job.data.sign_type, 'อักษรอะคริลิก');
 
   const st = await call('POST', `/jobs/${job.data.id}/status`, { token, body: { status: 'producing', note: 'ลูกค้าอนุมัติแบบแล้ว' } });
   assert.equal(st.data.status, 'producing');
@@ -85,7 +90,7 @@ test('ขั้นตอนหลัก: ลูกค้า → รับงา�
   const sum = await call('GET', '/reports/summary', { token });
   assert.equal(sum.data.totals.sales, 5000);
   assert.equal(sum.data.totals.collected, 5000);
-  assert.equal(sum.data.by_sign_type[0].sign_type, 'ป้ายไวนิล');
+  assert.equal(sum.data.by_sign_type[0].sign_type, 'อักษรอะคริลิก');
 
   const csv = await call('GET', '/reports/jobs.csv', { token });
   assert.equal(csv.status, 200);
@@ -96,7 +101,7 @@ test('ข้อมูลแต่ละร้านแยกจากกัน (
   const t1 = await register('ร้าน 1', 'one@shop.test');
   const t2 = await register('ร้าน 2', 'two@shop.test');
   const c1 = (await call('POST', '/customers', { token: t1, body: { name: 'ลูกค้าร้าน 1' } })).data;
-  const j1 = (await call('POST', '/jobs', { token: t1, body: { customer_id: c1.id, title: 'งานร้าน 1' } })).data;
+  const j1 = (await call('POST', '/jobs', { token: t1, body: { customer_id: c1.id, title: 'งานร้าน 1', job_type_id: (await call('GET', '/job-types', { token: t1 })).data[0].id } })).data;
 
   assert.equal((await call('GET', '/customers', { token: t2 })).data.total, 0);
   assert.equal((await call('GET', `/customers/${c1.id}`, { token: t2 })).status, 404);
@@ -104,10 +109,13 @@ test('ข้อมูลแต่ละร้านแยกจากกัน (
   assert.equal((await call('POST', `/jobs/${j1.id}/status`, { token: t2, body: { status: 'completed' } })).status, 404);
   assert.equal((await call('PUT', `/customers/${c1.id}`, { token: t2, body: { name: 'แฮ็ก' } })).status, 404);
   // อ้าง customer_id ของร้านอื่นตอนสร้างงานไม่ได้
-  assert.equal((await call('POST', '/jobs', { token: t2, body: { customer_id: c1.id, title: 'x' } })).status, 400);
+  const t2Type = (await call('GET', '/job-types', { token: t2 })).data[0].id;
+  const cross = await call('POST', '/jobs', { token: t2, body: { customer_id: c1.id, title: 'x', job_type_id: t2Type } });
+  assert.equal(cross.status, 400);
+  assert.match(cross.data.error, /ลูกค้า/);
   // เลขที่งานนับแยกแต่ละร้าน
   const c2 = (await call('POST', '/customers', { token: t2, body: { name: 'ลูกค้าร้าน 2' } })).data;
-  const j2 = (await call('POST', '/jobs', { token: t2, body: { customer_id: c2.id, title: 'งานร้าน 2' } })).data;
+  const j2 = (await call('POST', '/jobs', { token: t2, body: { customer_id: c2.id, title: 'งานร้าน 2', job_type_id: (await call('GET', '/job-types', { token: t2 })).data[0].id } })).data;
   assert.match(j2.job_no, /-0001$/);
 });
 
@@ -132,6 +140,53 @@ test('ตรวจสอบข้อมูลที่ส่งมา', async ()
   assert.equal((await call('POST', '/auth/register', { body: { shop_name: 'x', name: 'x', email: 'v@shop.test', password: 'password123' } })).status, 409);
   assert.equal((await call('POST', '/auth/login', { body: { email: 'v@shop.test', password: 'wrong-pass' } })).status, 401);
   const c = (await call('POST', '/customers', { token, body: { name: 'ลูกค้า' } })).data;
-  assert.equal((await call('POST', '/jobs', { token, body: { customer_id: c.id, title: 'x', price: -1 } })).status, 400);
-  assert.equal((await call('POST', '/jobs', { token, body: { customer_id: c.id, title: 'x', due_date: '14/10/2026' } })).status, 400);
+  const typeId = (await call('GET', '/job-types', { token })).data[0].id;
+  const ok = { customer_id: c.id, title: 'x', job_type_id: typeId };
+  assert.equal((await call('POST', '/jobs', { token, body: ok })).status, 201);
+  const bad1 = await call('POST', '/jobs', { token, body: { ...ok, price: -1 } });
+  assert.equal(bad1.status, 400);
+  assert.match(bad1.data.error, /ราคา/);
+  const bad2 = await call('POST', '/jobs', { token, body: { ...ok, due_date: '14/10/2026' } });
+  assert.equal(bad2.status, 400);
+  assert.match(bad2.data.error, /กำหนดส่ง/);
+});
+
+test('master ประเภทงาน', async () => {
+  const owner = await register('ร้านประเภทงาน', 'types@shop.test');
+  const other = await register('ร้านอื่น', 'types-other@shop.test');
+  const types = (await call('GET', '/job-types', { token: owner })).data;
+  const otherTypes = (await call('GET', '/job-types', { token: other })).data;
+  const misc = types.find((t) => t.requires_detail);
+  assert.equal(misc.name, 'งานป้ายอื่น ๆ');
+  const c = (await call('POST', '/customers', { token: owner, body: { name: 'ลูกค้า' } })).data;
+
+  // ต้องเลือกประเภทงาน, ใช้ประเภทของร้านอื่นไม่ได้, "อื่น ๆ" ต้องมีรายละเอียด
+  assert.equal((await call('POST', '/jobs', { token: owner, body: { customer_id: c.id, title: 'x' } })).status, 400);
+  assert.equal((await call('POST', '/jobs', { token: owner, body: { customer_id: c.id, title: 'x', job_type_id: otherTypes[0].id } })).status, 400);
+  assert.equal((await call('POST', '/jobs', { token: owner, body: { customer_id: c.id, title: 'x', job_type_id: misc.id } })).status, 400);
+  const job = (await call('POST', '/jobs', { token: owner, body: { customer_id: c.id, title: 'x', job_type_id: misc.id, description: 'ป้ายไม้แกะสลัก' } })).data;
+  assert.equal(job.sign_type, 'งานป้ายอื่น ๆ');
+
+  // เพิ่ม / ชื่อซ้ำ / เปลี่ยนชื่อแล้วงานเดิมเปลี่ยนตาม
+  const added = await call('POST', '/job-types', { token: owner, body: { name: 'ป้ายไวนิล', description: 'พิมพ์อิงค์เจ็ท' } });
+  assert.equal(added.status, 201);
+  assert.equal((await call('POST', '/job-types', { token: owner, body: { name: 'ป้ายไวนิล' } })).status, 409);
+  await call('PUT', `/job-types/${misc.id}`, { token: owner, body: { name: 'งานอื่น ๆ' } });
+  assert.equal((await call('GET', `/jobs/${job.id}`, { token: owner })).data.sign_type, 'งานอื่น ๆ');
+
+  // ลบประเภทที่มีงานใช้ไม่ได้ ต้องปิดใช้งานแทน; ประเภทที่ปิดแล้วเลือกใหม่ไม่ได้แต่งานเดิมแก้ไขต่อได้
+  assert.equal((await call('DELETE', `/job-types/${misc.id}`, { token: owner })).status, 409);
+  await call('PUT', `/job-types/${misc.id}`, { token: owner, body: { active: false } });
+  assert.ok(!(await call('GET', '/job-types', { token: owner })).data.some((t) => t.id === misc.id));
+  assert.equal((await call('GET', '/job-types?all=1', { token: owner })).data.length, 9);
+  assert.equal((await call('POST', '/jobs', { token: owner, body: { customer_id: c.id, title: 'y', job_type_id: misc.id, description: 'd' } })).status, 400);
+  assert.equal((await call('PUT', `/jobs/${job.id}`, { token: owner, body: { title: 'แก้ชื่องาน' } })).status, 200);
+  assert.equal((await call('DELETE', `/job-types/${added.data.id}`, { token: owner })).status, 200);
+
+  // แก้ไขประเภทงานของร้านอื่น / พนักงานแก้ master ไม่ได้
+  assert.equal((await call('PUT', `/job-types/${otherTypes[0].id}`, { token: owner, body: { name: 'แฮ็ก' } })).status, 404);
+  await call('POST', '/users', { token: owner, body: { name: 'พนักงาน', email: 'types-staff@shop.test', password: 'password123' } });
+  const staff = (await call('POST', '/auth/login', { body: { email: 'types-staff@shop.test', password: 'password123' } })).data.token;
+  assert.equal((await call('POST', '/job-types', { token: staff, body: { name: 'x' } })).status, 403);
+  assert.equal((await call('GET', '/job-types', { token: staff })).status, 200);
 });

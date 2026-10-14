@@ -12,17 +12,19 @@ const STATUS_KEYS = JOB_STATUSES.map((s) => s.key);
 // สถานะที่ถือว่างานยังไม่จบ (ใช้คำนวณงานค้าง / เลยกำหนด)
 const OPEN_STATUSES = STATUS_KEYS.filter((k) => k !== 'completed' && k !== 'cancelled');
 
-const SIGN_TYPES = [
-  'ป้ายไวนิล',
-  'ป้ายอะคริลิก',
-  'ป้ายกล่องไฟ',
-  'ตัวอักษรสแตนเลส/โลหะ',
-  'ป้ายไฟ LED/นีออน',
-  'สติ๊กเกอร์/ฟิล์ม',
-  'ป้ายโครงเหล็ก/บิลบอร์ด',
-  'ป้ายบอกทาง/ป้ายจราจร',
-  'อื่นๆ',
+// ประเภทงานเริ่มต้นของร้านใหม่ (แต่ละร้านแก้ไข/เพิ่มเองได้ในหน้าตั้งค่า)
+// requires_detail = ต้องกรอกรายละเอียดงานเมื่อเลือกประเภทนี้
+const DEFAULT_JOB_TYPES = [
+  { name: 'อักษรอะคริลิก', description: 'อักษรอะคริลิกตามสีและความหนาที่เลือก' },
+  { name: 'อักษรพ่นสี', description: 'อักษรที่ผ่านการพ่นสี' },
+  { name: 'อักษรโลหะ', description: 'อักษรผลิตจากวัสดุโลหะ' },
+  { name: 'อักษรสแตนเลส', description: 'อักษรสแตนเลสสีเงิน' },
+  { name: 'อักษรสแตนเลสสีทอง', description: 'อักษรสแตนเลสสีทอง' },
+  { name: 'อักษรไฟสว่างหน้า ขอบซิงค์', description: 'อักษรไฟส่องสว่างด้านหน้า พร้อมขอบซิงค์' },
+  { name: 'อักษรไฟสว่างหน้า ขอบสแตนเลส', description: 'อักษรไฟส่องสว่างด้านหน้า พร้อมขอบสแตนเลส' },
+  { name: 'งานป้ายอื่น ๆ', description: 'ระบุรายละเอียดเพิ่มเติม', requires_detail: true },
 ];
+
 
 const PRIORITIES = [
   { key: 'low', label: 'ต่ำ' },
@@ -55,7 +57,7 @@ module.exports = {
   JOB_STATUSES,
   STATUS_KEYS,
   OPEN_STATUSES,
-  SIGN_TYPES,
+  DEFAULT_JOB_TYPES,
   PRIORITIES,
   PAYMENT_KINDS,
   PAYMENT_METHODS,

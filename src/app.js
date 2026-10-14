@@ -24,6 +24,7 @@ function createApp(db) {
   api.use(requireAuth(db));
   api.use(require('./routes/users')(db));
   api.use(require('./routes/customers')(db));
+  api.use(require('./routes/jobTypes')(db));
   api.use(require('./routes/jobs')(db));
   api.use(require('./routes/reports')(db));
   api.use((req, res) => res.status(404).json({ error: 'ไม่พบ API นี้' }));

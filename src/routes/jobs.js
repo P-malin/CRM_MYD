@@ -39,7 +39,8 @@ module.exports = function jobRoutes(db) {
     const d = {
       customer_id: num(pick('customer_id'), 'ลูกค้า', { min: 1 }),
       title: requireStr(pick('title'), 'ชื่องาน'),
-      sign_type: str(pick('sign_type')),
+      job_type_id: num(pick('job_type_id'), 'ประเภทงาน', { min: 1 }),
+      sign_type: null,
       material: str(pick('material')),
       width_cm: num(pick('width_cm'), 'ความกว้าง', { min: 0 }),
       height_cm: num(pick('height_cm'), 'ความสูง', { min: 0 }),
@@ -55,6 +56,16 @@ module.exports = function jobRoutes(db) {
     if (!d.customer_id) throw new HttpError(400, 'กรุณาเลือกลูกค้า');
     if (!Number.isInteger(d.quantity) || !Number.isInteger(d.customer_id)) throw new HttpError(400, 'จำนวนต้องเป็นจำนวนเต็ม');
     if (d.assigned_to !== null && !Number.isInteger(d.assigned_to)) throw new HttpError(400, 'ผู้รับผิดชอบไม่ถูกต้อง');
+    if (d.job_type_id === null && !current.id) throw new HttpError(400, 'กรุณาเลือกประเภทงาน');
+    if (d.job_type_id !== null) {
+      // ประเภทที่ปิดใช้งานแล้ว เลือกใหม่ไม่ได้ แต่งานเดิมที่ใช้อยู่ยังบันทึกต่อได้
+      const type = await db.one('SELECT name, requires_detail, active FROM job_types WHERE id = ? AND tenant_id = ?', [d.job_type_id, tenantId]);
+      if (!type || (!type.active && d.job_type_id !== current.job_type_id)) throw new HttpError(400, 'ไม่พบประเภทงาน');
+      if (type.requires_detail && !d.description) throw new HttpError(400, `ประเภท "${type.name}" ต้องระบุรายละเอียดงาน`);
+      d.sign_type = type.name;
+    } else if (current.job_type_id === null && current.sign_type) {
+      d.sign_type = current.sign_type; // งานเก่าก่อนมี master ประเภทงาน
+    }
     await ensureCustomer(tenantId, d.customer_id);
     await ensureUser(tenantId, d.assigned_to);
     return d;
@@ -75,6 +86,10 @@ module.exports = function jobRoutes(db) {
     if (Number.isInteger(Number(req.query.customer_id)) && req.query.customer_id) {
       conds.push('j.customer_id = ?');
       params.push(Number(req.query.customer_id));
+    }
+    if (Number.isInteger(Number(req.query.job_type_id)) && req.query.job_type_id) {
+      conds.push('j.job_type_id = ?');
+      params.push(Number(req.query.job_type_id));
     }
     if (Number.isInteger(Number(req.query.assigned_to)) && req.query.assigned_to) {
       conds.push('j.assigned_to = ?');
