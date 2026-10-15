@@ -1,6 +1,7 @@
 const path = require('node:path');
 const express = require('express');
 const { requireAuth } = require('./auth');
+const { HttpError } = require('./util');
 const constants = require('./constants');
 
 function createApp(db) {
@@ -25,6 +26,8 @@ function createApp(db) {
   api.use(require('./routes/auth')(db));
   const { lineWebhookRoutes, lineSettingsRoutes } = require('./routes/line');
   api.use(lineWebhookRoutes(db));
+  const { fileRoutes, localFileRoutes } = require('./routes/files');
+  api.use(localFileRoutes());
   api.use(requireAuth(db));
   api.use(require('./routes/users')(db));
   api.use(require('./routes/customers')(db));
@@ -34,6 +37,7 @@ function createApp(db) {
   api.use(require('./routes/jobs')(db));
   api.use(require('./routes/quotations')(db));
   api.use(require('./routes/receipts')(db));
+  api.use(fileRoutes(db));
   api.use(require('./routes/reports')(db));
   api.use((req, res) => res.status(404).json({ error: 'ไม่พบ API นี้' }));
 
@@ -43,8 +47,10 @@ function createApp(db) {
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
     const status = err.status || err.statusCode || 500;
-    if (status >= 500) console.error(err);
-    res.status(status).json({ error: status >= 500 ? 'เกิดข้อผิดพลาดในระบบ' : err.message });
+    // ข้อผิดพลาดที่ตั้งใจแจ้งผู้ใช้ (HttpError) แสดงข้อความจริง; ข้อผิดพลาดอื่นซ่อนรายละเอียด
+    const expose = err instanceof HttpError || status < 500;
+    if (!expose) console.error(err);
+    res.status(status).json({ error: expose ? err.message : 'เกิดข้อผิดพลาดในระบบ' });
   });
   return app;
 }

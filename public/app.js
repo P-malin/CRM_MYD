@@ -595,6 +595,7 @@ async function viewJob(id, seq) {
         </div>
       </div>
     </div>
+    <div class="card" id="files-card"><h2>ไฟล์และรูปภาพ</h2><div id="files-body"><p class="muted">กำลังโหลด…</p></div></div>
     <div class="card"><div class="page-head" style="margin-bottom:8px"><h2 style="margin:0">ใบเสนอราคา</h2><button class="btn" id="new-quote">+ สร้างใบเสนอราคา</button></div>
       ${j.quotations.length ? `<table>${j.quotations.map((q) => `<tr class="click" data-href="#/quotes/${q.id}">
         <td class="nowrap">${esc(q.quote_no)}</td><td>${thDate(q.issue_date)}</td><td>${quoteBadge(q.status)}</td><td class="right">${baht(q.total)}</td></tr>`).join('')}</table>`
@@ -610,6 +611,7 @@ async function viewJob(id, seq) {
     </ul></div>`);
 
   main.querySelector('#edit').addEventListener('click', () => jobForm(j));
+  loadJobFiles(main.querySelector('#files-body'), j.id, seq);
   main.querySelector('#new-quote').addEventListener('click', async () => {
     try {
       const q = await api('POST', '/quotations', { job_id: j.id });
@@ -667,6 +669,165 @@ async function viewJob(id, seq) {
     toast('ลบงานแล้ว');
     location.hash = '#/jobs';
   });
+}
+
+// ---------- job files (แบบป้าย / รูปหน้างาน) ----------
+const fileSize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+const fileExt = (name) => (String(name).toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
+
+// ย่อรูปจากมือถือก่อนอัปโหลด (ด้านยาวสุด 2000px, JPEG) — ไฟล์อื่นส่งตามเดิม
+async function compressImage(file) {
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size < 1.5 * 1048576 || !window.createImageBitmap) return file;
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
+    const canvas = Object.assign(document.createElement('canvas'), { width: Math.round(bmp.width * scale), height: Math.round(bmp.height * scale) });
+    canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.85));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], `${file.name.replace(/\.[^.]+$/, '')}.jpg`, { type: 'image/jpeg' });
+  } catch {
+    return file;
+  }
+}
+
+// PUT ไฟล์ไปที่เก็บพร้อมแถบความคืบหน้า
+function putWithProgress(upload, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(upload.method || 'PUT', upload.url);
+    for (const [k, v] of Object.entries(upload.headers || {})) xhr.setRequestHeader(k, v);
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    xhr.onload = () => (xhr.status < 300 ? resolve() : reject(new Error(`อัปโหลดไม่สำเร็จ (${xhr.status})`)));
+    xhr.onerror = () => reject(new Error('อัปโหลดไม่สำเร็จ — ตรวจการเชื่อมต่ออินเทอร์เน็ต'));
+    xhr.send(file);
+  });
+}
+
+async function uploadJobFiles(jobId, category, fileList, progressEl) {
+  const accept = new Set(state.meta.FILE_EXTENSIONS);
+  let ok = 0;
+  for (const original of fileList) {
+    const row = document.createElement('div');
+    row.className = 'up-row';
+    row.innerHTML = `<span class="up-name">${esc(original.name)}</span><span class="up-bar"><span></span></span><span class="up-msg muted">เตรียมไฟล์…</span>`;
+    progressEl.append(row);
+    const msg = row.querySelector('.up-msg');
+    const bar = row.querySelector('.up-bar > span');
+    try {
+      if (!accept.has(fileExt(original.name))) throw new Error(`ไม่รองรับไฟล์ .${fileExt(original.name) || '?'}`);
+      const file = await compressImage(original);
+      if (file.size > state.meta.MAX_FILE_MB * 1048576) throw new Error(`ใหญ่เกิน ${state.meta.MAX_FILE_MB} MB`);
+      const r = await api('POST', `/jobs/${jobId}/files`, { category, filename: file.name, content_type: file.type || 'application/octet-stream', size: file.size });
+      msg.textContent = fileSize(file.size);
+      await putWithProgress(r.upload, file, (p) => (bar.style.width = `${Math.round(p * 100)}%`));
+      await api('POST', `/files/${r.file.id}/complete`);
+      bar.style.width = '100%';
+      row.classList.add('done');
+      msg.textContent = '✓ เสร็จ';
+      ok++;
+    } catch (ex) {
+      row.classList.add('failed');
+      msg.textContent = ex.message;
+    }
+  }
+  return ok;
+}
+
+async function loadJobFiles(el, jobId, seq) {
+  let files;
+  try {
+    files = await api('GET', `/jobs/${jobId}/files`);
+  } catch (ex) {
+    el.innerHTML = `<p class="muted">${esc(ex.message)}</p>`;
+    return;
+  }
+  if (seq !== routeSeq) return;
+  const canDelete = (f) => isAdmin() || f.uploaded_by === state.me.user.id;
+  const docExts = state.meta.FILE_EXTENSIONS.map((e) => `.${e}`).join(',');
+  el.innerHTML = state.meta.FILE_CATEGORIES.map((c) => {
+    const items = files.filter((f) => f.category === c.key);
+    const photo = c.key === 'before' || c.key === 'after';
+    return `<div class="fcat" data-cat="${c.key}">
+      <div class="fcat-head"><b>${c.icon} ${esc(c.label)}</b> <span class="muted">${items.length ? `(${items.length})` : ''}</span>
+        <label class="btn small">+ ${photo ? 'เพิ่มรูป' : 'แนบไฟล์'}<input type="file" multiple accept="${photo ? 'image/*' : docExts}" hidden></label></div>
+      <div class="fgrid">${items.map((f) => f.is_image
+        ? `<button type="button" class="fthumb" data-file="${f.id}" title="${esc(f.filename)}"><img src="${esc(f.url)}" alt="${esc(f.filename)}" loading="lazy"></button>`
+        : `<div class="fdoc"><span class="fext">${esc(fileExt(f.filename).toUpperCase())}</span>
+            <a href="${esc(f.download_url)}" class="fname" title="${esc(f.filename)}">${esc(f.filename)}</a>
+            <span class="muted">${fileSize(f.size)} · ${esc(f.uploaded_by_name || '')}</span>
+            ${canDelete(f) ? `<button type="button" class="icon-btn" data-del-file="${f.id}" title="ลบไฟล์">🗑</button>` : ''}</div>`).join('')}
+      </div>
+      <div class="fprogress"></div>
+    </div>`;
+  }).join('') + `<p class="muted" style="font-size:13px;margin:4px 0 0">รองรับรูปภาพ, PDF, AI, PSD, CDR, EPS, SVG, DXF, ZIP · สูงสุดไฟล์ละ ${state.meta.MAX_FILE_MB} MB · รูปจากมือถือย่อขนาดให้อัตโนมัติ</p>`;
+
+  el.querySelectorAll('.fcat input[type=file]').forEach((input) =>
+    input.addEventListener('change', async () => {
+      const cat = input.closest('.fcat');
+      const files = [...input.files];
+      input.value = '';
+      if (!files.length) return;
+      const ok = await uploadJobFiles(jobId, cat.dataset.cat, files, cat.querySelector('.fprogress'));
+      if (ok) toast(`อัปโหลดแล้ว ${ok} ไฟล์`);
+      if (ok === files.length) loadJobFiles(el, jobId, routeSeq);
+      else setTimeout(() => loadJobFiles(el, jobId, routeSeq), 4000);
+    }),
+  );
+  const del = async (f) => {
+    if (!confirm(`ลบไฟล์ "${f.filename}"?`)) return false;
+    try {
+      await api('DELETE', `/files/${f.id}`);
+      toast('ลบไฟล์แล้ว');
+      loadJobFiles(el, jobId, routeSeq);
+      return true;
+    } catch (ex) {
+      toast(ex.message, true);
+      return false;
+    }
+  };
+  el.querySelectorAll('[data-del-file]').forEach((b) => b.addEventListener('click', () => del(files.find((f) => f.id === Number(b.dataset.delFile)))));
+  el.querySelectorAll('[data-file]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const f = files.find((x) => x.id === Number(b.dataset.file));
+      const images = files.filter((x) => x.is_image && x.category === f.category);
+      openLightbox(images, images.indexOf(f), canDelete, del);
+    }),
+  );
+}
+
+// ดูรูปขนาดใหญ่ เลื่อนดูรูปในหมวดเดียวกันได้
+function openLightbox(images, index, canDelete, del) {
+  let i = index;
+  const box = document.createElement('div');
+  box.className = 'lightbox';
+  const render = () => {
+    const f = images[i];
+    box.innerHTML = `<div class="lb-top"><span>${esc(f.filename)} <span class="lb-meta">· ${fileSize(f.size)} · ${esc(f.uploaded_by_name || '')} · ${thDateTime(f.created_at)}</span></span>
+        <span class="lb-actions"><a class="btn small" href="${esc(f.download_url)}">ดาวน์โหลด</a>
+        ${canDelete(f) ? '<button class="btn small danger" data-lb-del>ลบ</button>' : ''}<button class="btn small" data-lb-close>ปิด ✕</button></span></div>
+      <div class="lb-stage">${images.length > 1 ? '<button class="lb-nav prev" data-lb-prev>‹</button>' : ''}
+        <img src="${esc(f.url)}" alt="${esc(f.filename)}">${images.length > 1 ? '<button class="lb-nav next" data-lb-next>›</button>' : ''}</div>
+      ${images.length > 1 ? `<div class="lb-count">${i + 1} / ${images.length}</div>` : ''}`;
+  };
+  const close = () => {
+    box.remove();
+    document.removeEventListener('keydown', onKey);
+  };
+  const move = (d) => {
+    i = (i + d + images.length) % images.length;
+    render();
+  };
+  const onKey = (e) => (e.key === 'Escape' ? close() : e.key === 'ArrowLeft' ? move(-1) : e.key === 'ArrowRight' ? move(1) : null);
+  box.addEventListener('click', async (e) => {
+    if (e.target === box || e.target.closest('[data-lb-close]')) close();
+    else if (e.target.closest('[data-lb-prev]')) move(-1);
+    else if (e.target.closest('[data-lb-next]')) move(1);
+    else if (e.target.closest('[data-lb-del]') && (await del(images[i]))) close();
+  });
+  document.addEventListener('keydown', onKey);
+  render();
+  document.body.append(box);
 }
 
 // ---------- quotations ----------

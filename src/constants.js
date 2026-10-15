@@ -85,6 +85,16 @@ const RECEIPT_TYPES = [
   { key: 'tax_invoice', label: 'ใบเสร็จรับเงิน/ใบกำกับภาษี', en: 'RECEIPT / TAX INVOICE', prefix: 'IV' },
 ];
 
+// หมวดไฟล์แนบของงาน
+const FILE_CATEGORIES = [
+  { key: 'design', label: 'แบบป้าย', icon: '🎨' },
+  { key: 'before', label: 'รูปหน้างาน (ก่อนติดตั้ง)', icon: '📷' },
+  { key: 'after', label: 'รูปหลังติดตั้ง', icon: '✅' },
+  { key: 'other', label: 'อื่น ๆ', icon: '📎' },
+];
+const FILE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'heif', 'tif', 'tiff', 'pdf', 'ai', 'eps', 'psd', 'cdr', 'svg', 'dxf', 'dwg', 'zip', 'rar', '7z'];
+const MAX_FILE_MB = 20;
+
 const ROLES = [
   { key: 'owner', label: 'เจ้าของร้าน' },
   { key: 'admin', label: 'ผู้ดูแล' },
@@ -102,5 +112,8 @@ module.exports = {
   PAYMENT_METHODS,
   QUOTE_STATUSES,
   RECEIPT_TYPES,
+  FILE_CATEGORIES,
+  FILE_EXTENSIONS,
+  MAX_FILE_MB,
   ROLES,
 };

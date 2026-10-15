@@ -2,6 +2,7 @@ const express = require('express');
 const { requireRole } = require('../auth');
 const { HttpError, str, requireStr, num, oneOf, date, mapsUrl, appUrl, intId, today, pagination } = require('../util');
 const { notifyStatus } = require('../notify');
+const { removeJobFiles } = require('./files');
 const { ACTIVE_KINDS, PRIORITIES, PAYMENT_KINDS, PAYMENT_METHODS, DELIVERY_METHODS } = require('../constants');
 
 const PRIORITY_KEYS = PRIORITIES.map((p) => p.key);
@@ -271,6 +272,7 @@ module.exports = function jobRoutes(db) {
     if (await db.one('SELECT 1 FROM receipts WHERE job_id = ? LIMIT 1', [job.id])) {
       throw new HttpError(409, 'งานนี้มีใบเสร็จ/ใบกำกับภาษีแล้ว ลบไม่ได้ — เปลี่ยนสถานะเป็น "ยกเลิก" แทน');
     }
+    await removeJobFiles(db, job.id);
     await db.run('DELETE FROM jobs WHERE id = ?', [job.id]);
     res.json({ ok: true });
   });
